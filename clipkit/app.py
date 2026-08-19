@@ -9,16 +9,16 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from . import __version__
-from .hardware import Hardware, detect, load_cached_hardware, obs_is_running, wait_until_obs_closed
+from .hardware import Hardware, detect, load_cached_hardware, obs_is_running
 from .health import probe, reveal_in_explorer
 from .install_obs import (
-    close_obs,
     find_obs_exe,
     fresh_install_obs,
     install_obs,
     launch_obs_clipkit,
     obs_exe_present,
     obs_is_installed,
+    prepare_obs_then_close,
     reveal_obs_window,
 )
 from .keys import DEFAULT_BINDS, Hotkey, UserBinds, from_tk, mouse_button_held
@@ -811,42 +811,40 @@ class ClipKitApp(tk.Tk):
         if not folder:
             messagebox.showerror("Clips folder", "Pick a folder where clips should be saved.")
             return
-        if obs_is_running():
-            self._set_busy(True, "Restarting OBS so ClipKit can write settings. FiveM can stay open.")
-            threading.Thread(target=self._restart_obs_then_apply, daemon=True).start()
-            return
-        self._continue_apply()
-
-    def _restart_obs_then_apply(self) -> None:
-        close_obs()
-        closed = wait_until_obs_closed()
-        self.after(0, lambda ok=closed: self._after_obs_restart(ok))
-
-    def _after_obs_restart(self, closed: bool) -> None:
-        if not closed:
-            self._set_busy(False, "OBS is still open.")
-            messagebox.showerror(
-                "OBS is still open",
-                "ClipKit could not close OBS (check the tray icon). FiveM can stay open — only OBS needs a restart.",
-            )
-            return
-        self._set_busy(False)
-        self._continue_apply()
-
-    def _continue_apply(self) -> None:
-        if not obs_is_installed():
+        installing = not obs_is_installed()
+        if installing:
             if not messagebox.askyesno(
                 "Install OBS Studio?",
                 "OBS Studio is not on this PC.\n\n"
-                "ClipKit will install OBS, then set up everything else automatically:\n"
-                "clips folder, keys, game audio, mic, replay buffer, and Windows start.\n\n"
-                "Windows will ask for permission — click Yes. Keep ClipKit open.\n"
-                "It continues on its own after OBS finishes installing.\n\nContinue?",
+                "ClipKit will install OBS, wait until it is running, close it, "
+                "write the ClipKit setup, then open OBS again.\n\n"
+                "FiveM can stay open.\n\n"
+                "Windows will ask for permission — click Yes. Keep ClipKit open.\n\nContinue?",
             ):
                 return
             self._set_busy(True, "Installing OBS Studio…")
-            threading.Thread(target=self._install_then_apply, daemon=True).start()
+        else:
+            self._set_busy(True, "Opening OBS… FiveM can stay running.")
+        threading.Thread(target=self._prepare_obs_then_apply, args=(installing,), daemon=True).start()
+
+    def _prepare_obs_then_apply(self, installing: bool) -> None:
+        def status(message: str) -> None:
+            self.after(0, lambda m=message: self._status.set(m))
+
+        try:
+            if installing or not obs_is_installed():
+                install_obs(status)
+            prepare_obs_then_close(status)
+        except Exception as exc:  # noqa: BLE001
+            self.after(0, lambda: self._install_failed(exc))
             return
+        self.after(0, lambda: self._do_apply_ready(fresh=installing))
+
+    def _do_apply_ready(self, fresh: bool = False) -> None:
+        if fresh:
+            self._start_with_windows.set(True)
+            self._enable_recording.set(True)
+        self._sync_obs_presence(True, update_status=False)
         self._do_apply()
 
     def fresh_install(self) -> None:
@@ -873,41 +871,16 @@ class ClipKitApp(tk.Tk):
 
         try:
             fresh_install_obs(status)
+            prepare_obs_then_close(status)
         except Exception as exc:  # noqa: BLE001
             self.after(0, lambda: self._install_failed(exc))
             return
-        self.after(0, self._after_obs_installed)
-
-    def _install_then_apply(self) -> None:
-        def status(message: str) -> None:
-            self.after(0, lambda m=message: self._status.set(m))
-
-        try:
-            install_obs(status)
-        except Exception as exc:  # noqa: BLE001
-            self.after(0, lambda: self._install_failed(exc))
-            return
-        self.after(0, self._after_obs_installed)
+        self.after(0, lambda: self._do_apply_ready(fresh=True))
 
     def _install_failed(self, exc: Exception) -> None:
         self._set_busy(False, "OBS install did not finish.")
         traceback.print_exc()
         messagebox.showerror("Could not install OBS", str(exc))
-
-    def _after_obs_installed(self) -> None:
-        if find_obs_exe() is None:
-            self._set_busy(False, "OBS install finished, but the app was not found.")
-            messagebox.showerror(
-                "OBS not found",
-                "The installer ran, but obs64.exe was not found. Open OBS from the Start menu once, then run ClipKit again.",
-            )
-            return
-        self._start_with_windows.set(True)
-        self._enable_recording.set(True)
-        self._just_installed = True
-        self._set_busy(False)
-        self._sync_obs_presence(True, update_status=True)
-        self._do_apply()
 
     def _persist_settings(self) -> None:
         try:
@@ -1068,6 +1041,7 @@ class ClipKitApp(tk.Tk):
         self._on_choices_changed()
         preset = self._presets.get(self._preset_id.get())
         if preset is None:
+            self._set_busy(False)
             messagebox.showerror("ClipKit", "Pick a preset first.")
             return
         try:
@@ -1080,6 +1054,7 @@ class ClipKitApp(tk.Tk):
                 start_with_windows=self._start_with_windows.get(),
             )
         except Exception as exc:  # noqa: BLE001
+            self._set_busy(False)
             traceback.print_exc()
             messagebox.showerror("ClipKit could not apply settings", str(exc))
             return
@@ -1098,6 +1073,7 @@ class ClipKitApp(tk.Tk):
             self.after(500, self._poll_health)
             return
         info = probe()
+        self._set_busy(False)
         self._show_apply_result(result, info)
 
 

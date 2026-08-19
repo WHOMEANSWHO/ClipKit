@@ -418,6 +418,30 @@ def obs_exe_present() -> bool:
     return False
 
 
+def _obs_popen(args: list[str], exe: Path) -> bool:
+    flags = 0
+    if hasattr(subprocess, "DETACHED_PROCESS"):
+        flags |= subprocess.DETACHED_PROCESS
+    if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
+        flags |= subprocess.CREATE_NEW_PROCESS_GROUP
+    try:
+        subprocess.Popen(args, cwd=str(exe.parent), creationflags=flags)
+    except OSError:
+        return False
+    return True
+
+
+def launch_obs_plain() -> bool:
+    """Start OBS with no ClipKit profile, so a first run can finish loading."""
+    exe = find_obs_exe()
+    if exe is None or not exe.is_file():
+        return False
+    if not _obs_popen([str(exe), "--disable-shutdown-check"], exe):
+        return False
+    reveal_obs_window()
+    return True
+
+
 def launch_obs_clipkit() -> bool:
     """Start OBS with the ClipKit profile and replay buffer, as a normal window."""
     exe = find_obs_exe()
@@ -432,31 +456,25 @@ def launch_obs_clipkit() -> bool:
         "ClipKit",
         "--disable-shutdown-check",
     ]
-    flags = 0
-    if hasattr(subprocess, "DETACHED_PROCESS"):
-        flags |= subprocess.DETACHED_PROCESS
-    if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
-        flags |= subprocess.CREATE_NEW_PROCESS_GROUP
-    try:
-        subprocess.Popen(args, cwd=str(exe.parent), creationflags=flags)
-    except OSError:
+    if not _obs_popen(args, exe):
         return False
     reveal_obs_window()
     return True
 
 
-def reveal_obs_window() -> bool:
-    """Bring the OBS window out of the tray / minimized state."""
-    import ctypes
-    from ctypes import wintypes
+def obs_window_is_open() -> bool:
+    """True when the OBS Studio window exists (not the ClipKit app)."""
+    return bool(_obs_hwnds())
 
+
+def _obs_hwnds() -> list[int]:
     user32 = ctypes.windll.user32
-    SW_RESTORE = 9
-    SW_SHOW = 5
     found: list[int] = []
 
     @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
     def each(hwnd, _lparam):
+        if not user32.IsWindowVisible(hwnd):
+            return True
         length = user32.GetWindowTextLengthW(hwnd)
         if length <= 0:
             return True
@@ -466,13 +484,64 @@ def reveal_obs_window() -> bool:
         lower = title.lower()
         if "clipkit" in lower:
             return True
-        if title.startswith("OBS") or "obs studio" in lower:
+        if title.startswith("OBS") or "obs studio" in lower or "auto-configuration" in lower:
             found.append(hwnd)
         return True
 
     user32.EnumWindows(each, 0)
+    return found
+
+
+def wait_until_obs_ready(status: StatusFn | None = None, *, timeout: float = 90.0) -> bool:
+    """Wait until OBS is running and its window has stayed open for a moment."""
+    from .hardware import obs_is_running
+
+    status = status or _noop
+    deadline = time.monotonic() + timeout
+    ready_since: float | None = None
+    while time.monotonic() < deadline:
+        reveal_obs_window()
+        running = obs_is_running()
+        window = obs_window_is_open()
+        if running and window:
+            if ready_since is None:
+                ready_since = time.monotonic()
+                status("OBS is open. Waiting until it finishes starting…")
+            elif time.monotonic() - ready_since >= 2.0:
+                return True
+        else:
+            ready_since = None
+            status("Waiting for OBS to open…")
+        time.sleep(0.3)
+    return obs_is_running() and obs_window_is_open()
+
+
+def prepare_obs_then_close(status: StatusFn | None = None) -> None:
+    """Open OBS until it is fully up, then close it so ClipKit can write files."""
+    from .hardware import obs_is_running, wait_until_obs_closed
+
+    status = status or _noop
+    if not obs_is_running():
+        status("Starting OBS…")
+        if not launch_obs_plain():
+            raise RuntimeError("OBS is installed, but it would not start.")
+    if not wait_until_obs_ready(status, timeout=90):
+        raise RuntimeError("OBS started, but the window never finished opening.")
+    status("OBS is running. Closing it so ClipKit can write settings…")
+    close_obs()
+    if not wait_until_obs_closed(timeout=20):
+        raise RuntimeError(
+            "OBS would not close. Check the tray icon, then click Apply again. FiveM can stay open."
+        )
+
+
+def reveal_obs_window() -> bool:
+    """Bring the OBS window out of the tray / minimized state."""
+    user32 = ctypes.windll.user32
+    SW_RESTORE = 9
+    SW_SHOW = 5
     shown = False
-    for hwnd in found:
+    for hwnd in _obs_hwnds():
         user32.ShowWindow(hwnd, SW_RESTORE)
         user32.ShowWindow(hwnd, SW_SHOW)
         user32.SetForegroundWindow(hwnd)

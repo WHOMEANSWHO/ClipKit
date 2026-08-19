@@ -38,15 +38,14 @@ Do not download `release/ClipKit.exe` from the repo tree. That copy can sit behi
 1. Download **ClipKit.exe**.
 2. Double-click it. Windows may ask to allow it.
 3. Pick a clips folder, clip length, bitrate, and keys if you want to change them. **Open** next to the path shows that folder.
-4. Click **Apply**. If OBS is open, ClipKit restarts it. FiveM can stay running.
-5. Click **Install OBS and set up**, or **Apply to OBS** if OBS is already installed.
-6. Wait for the health check: OBS should be open on **ClipKit**. If you already picked a game window in OBS, it should name that game.
-7. Click **Test clip** once OBS is open. It opens the clips folder — press the save-clip key in OBS, then check that a file appears.
-8. Delete **ClipKit.exe**. You do not need it installed. Play, and press the save-clip key after something happens.
+4. Click **Apply**. ClipKit installs OBS if needed, waits until OBS is fully open, closes it, writes the ClipKit setup, then opens OBS again. FiveM can stay running.
+5. Wait for the health check: OBS should be open on **ClipKit**. If you already picked a game window in OBS, it should name that game.
+6. Click **Test clip** once OBS is open. It opens the clips folder — press the save-clip key in OBS, then check that a file appears.
+7. Delete **ClipKit.exe**. You do not need it installed. Play, and press the save-clip key after something happens.
 
 Windows SmartScreen may appear because the app is not signed. **More info → Run anyway**.
 
-If OBS is missing, ClipKit installs the official 64-bit OBS Studio, then sets everything else up and opens OBS on the ClipKit profile.
+If OBS is missing, ClipKit installs official OBS, waits until it is running, closes it, writes the ClipKit profile, then opens OBS again.
 
 ## Keys (defaults)
 
