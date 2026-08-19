@@ -162,10 +162,19 @@ def _schedule_delete_folder(folder: Path) -> None:
         flags |= subprocess.CREATE_NEW_PROCESS_GROUP
     if hasattr(subprocess, "CREATE_NO_WINDOW"):
         flags |= subprocess.CREATE_NO_WINDOW
+    startup = None
+    if hasattr(subprocess, "STARTUPINFO"):
+        startup = subprocess.STARTUPINFO()
+        startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startup.wShowWindow = 0
     subprocess.Popen(
-        f'cmd.exe /c ping 127.0.0.1 -n 4 >nul & rmdir /s /q "{quoted}"',
-        shell=True,
+        ["cmd.exe", "/c", f'ping 127.0.0.1 -n 4 >nul & rmdir /s /q "{quoted}"'],
+        shell=False,
         creationflags=flags,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        startupinfo=startup,
     )
 
 

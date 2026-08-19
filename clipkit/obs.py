@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import uuid
 from configparser import ConfigParser
@@ -296,7 +297,6 @@ def _scene_collection(
 ) -> dict:
     game_uuid = _new_uuid()
     scene_uuid = _new_uuid()
-    desktop_uuid = _new_uuid()
     mic_uuid = _new_uuid()
     capture_name = "Game Capture"
     scripts = []
@@ -377,24 +377,6 @@ def _scene_collection(
 
     return {
         "name": SCENE_NAME,
-        "DesktopAudioDevice1": audio_source(
-            "Desktop Audio",
-            desktop_uuid,
-            "wasapi_output_capture",
-            muted=True,
-            mixers=0,
-            device_id="disabled",
-            enabled=False,
-        ),
-        "DesktopAudioDevice2": audio_source(
-            "Desktop Audio 2",
-            _new_uuid(),
-            "wasapi_output_capture",
-            muted=True,
-            mixers=0,
-            device_id="disabled",
-            enabled=False,
-        ),
         "AuxAudioDevice1": audio_source(
             "Mic",
             mic_uuid,
@@ -543,7 +525,7 @@ FirstRun=false
 
 [BasicWindow]
 PreviewEnabled=true
-SysTrayEnabled=true
+SysTrayEnabled=false
 SysTrayWhenStarted=false
 SysTrayMinimizeToTray=false
 
@@ -565,6 +547,28 @@ def _set_current_profile(parser: ConfigParser) -> None:
     parser.set("Basic", "SceneCollectionFile", f"{SCENE_NAME}.json")
 
 
+def _upsert_ini_key(text: str, section: str, key: str, value: str) -> str:
+    section_re = re.compile(rf"^\[{re.escape(section)}\][ \t]*$", re.M)
+    match = section_re.search(text)
+    line = f"{key}={value}"
+    if not match:
+        stripped = text.rstrip()
+        extra = f"\n[{section}]\n{line}\n"
+        return (stripped + extra + ("\n" if text.endswith("\n") else "")) if stripped else f"[{section}]\n{line}\n"
+    start = match.end()
+    next_sec = re.search(r"^\[", text[start:], re.M)
+    end = start + next_sec.start() if next_sec else len(text)
+    body = text[start:end]
+    key_re = re.compile(rf"(?im)^{re.escape(key)}[ \t]*=.*$", re.M)
+    if key_re.search(body):
+        body = key_re.sub(line, body, count=1)
+    else:
+        body = "\n" + line + body
+        if not body.endswith("\n"):
+            body += "\n"
+    return text[:start] + body + text[end:]
+
+
 def _update_user_ini(config_dir: Path) -> None:
     user_ini = config_dir / "user.ini"
     parser = _ini_parser()
@@ -577,11 +581,31 @@ def _update_user_ini(config_dir: Path) -> None:
     parser.set("General", "FirstRun", "false")
     if not parser.has_section("BasicWindow"):
         parser.add_section("BasicWindow")
-    parser.set("BasicWindow", "SysTrayEnabled", "true")
+    parser.set("BasicWindow", "SysTrayEnabled", "false")
     parser.set("BasicWindow", "SysTrayMinimizeToTray", "false")
     parser.set("BasicWindow", "SysTrayWhenStarted", "false")
+    parser.set("BasicWindow", "PreviewEnabled", "true")
+    parser.set("BasicWindow", "MixerShowInactive", "false")
+    parser.set("BasicWindow", "MixerShowHidden", "false")
     with user_ini.open("w", encoding="utf-8", newline="\r\n") as handle:
         parser.write(handle, space_around_delimiters=False)
+    # OBS first-run can ignore ConfigParser writes. Force the tray keys in the raw file too.
+    try:
+        text = user_ini.read_text(encoding="utf-8-sig").replace("\r\n", "\n")
+    except OSError:
+        return
+    for section, key, value in (
+        ("General", "HotkeyFocusType", "NeverDisableHotkeys"),
+        ("General", "FirstRun", "false"),
+        ("BasicWindow", "SysTrayEnabled", "false"),
+        ("BasicWindow", "SysTrayWhenStarted", "false"),
+        ("BasicWindow", "SysTrayMinimizeToTray", "false"),
+        ("BasicWindow", "PreviewEnabled", "true"),
+        ("BasicWindow", "MixerShowInactive", "false"),
+        ("BasicWindow", "MixerShowHidden", "false"),
+    ):
+        text = _upsert_ini_key(text, section, key, value)
+    user_ini.write_text(text.replace("\n", "\r\n"), encoding="utf-8")
 
 
 def apply_setup(

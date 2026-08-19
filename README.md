@@ -87,6 +87,7 @@ python build.py
 - ClipKit searches common install folders, the registry, shortcuts, and other drives for OBS before it installs a new copy.
 - A backup of `user.ini` is stored in `%APPDATA%\obs-studio\clipkit-backups\`.
 - Last folder, keys, bitrate, and the rest of the setup are stored in `%APPDATA%\ClipKit\settings.json`.
+- **Fresh OBS install** in the app wipes OBS, then downloads the newest official Windows x64 installer and applies ClipKit.
 - Switch back anytime in OBS: **Profile → Untitled**.
 
 ## License

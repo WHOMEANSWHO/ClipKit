@@ -32,6 +32,70 @@ local function write_replay_status(on)
     handle:close()
 end
 
+local hide_tries = 0
+
+local function disable_desktop_audio()
+    -- Channels 1 and 2 are Desktop Audio / Desktop Audio 2. Leave mic (3) alone.
+    pcall(obs.obs_set_output_source, 1, nil)
+    pcall(obs.obs_set_output_source, 2, nil)
+    local sources = obs.obs_enum_sources()
+    if sources == nil then
+        return
+    end
+    for _, source in ipairs(sources) do
+        local id = obs.obs_source_get_unversioned_id(source)
+        if id == "wasapi_output_capture" then
+            local priv = obs.obs_source_get_private_settings(source)
+            obs.obs_data_set_bool(priv, "mixer_hidden", true)
+            obs.obs_data_release(priv)
+            pcall(obs.obs_source_set_muted, source, true)
+            pcall(obs.obs_source_set_enabled, source, false)
+        end
+    end
+    obs.source_list_release(sources)
+end
+
+function hide_desktop_tick()
+    hide_tries = hide_tries + 1
+    disable_desktop_audio()
+    if hide_tries >= 10 then
+        obs.timer_remove(hide_desktop_tick)
+    end
+end
+
+local function keep_hiding_desktop()
+    hide_tries = 0
+    disable_desktop_audio()
+    pcall(function()
+        obs.timer_remove(hide_desktop_tick)
+    end)
+    obs.timer_add(hide_desktop_tick, 400)
+end
+
+local function show_obs_window()
+    local ok, lib = pcall(require, "ffi")
+    if not ok or lib == nil then
+        return
+    end
+    pcall(function()
+        lib.cdef[[
+            typedef void* HWND;
+            HWND GetActiveWindow();
+            HWND GetForegroundWindow();
+            int ShowWindow(HWND, int);
+            int SetForegroundWindow(HWND);
+        ]]
+        local hwnd = lib.C.GetActiveWindow()
+        if hwnd == nil then
+            hwnd = lib.C.GetForegroundWindow()
+        end
+        if hwnd ~= nil then
+            lib.C.ShowWindow(hwnd, 9)
+            lib.C.SetForegroundWindow(hwnd)
+        end
+    end)
+end
+
 local function try_beep()
     local ok, lib = pcall(require, "ffi")
     if not ok or lib == nil then
@@ -98,6 +162,9 @@ end
 
 local function on_event(event)
     if event == obs.OBS_FRONTEND_EVENT_FINISHED_LOADING then
+        disable_desktop_audio()
+        show_obs_window()
+        keep_hiding_desktop()
         begin_retry()
     elseif obs.OBS_FRONTEND_EVENT_REPLAY_BUFFER_STARTED and event == obs.OBS_FRONTEND_EVENT_REPLAY_BUFFER_STARTED then
         write_replay_status(true)
@@ -122,10 +189,16 @@ end
 
 function script_load(settings)
     obs.obs_frontend_add_event_callback(on_event)
+    disable_desktop_audio()
+    show_obs_window()
+    keep_hiding_desktop()
     begin_retry()
 end
 
 function script_unload()
     stop_retry()
+    pcall(function()
+        obs.timer_remove(hide_desktop_tick)
+    end)
     obs.obs_frontend_remove_event_callback(on_event)
 end

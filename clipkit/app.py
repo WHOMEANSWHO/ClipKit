@@ -11,7 +11,15 @@ from tkinter import filedialog, messagebox, ttk
 from . import __version__
 from .hardware import Hardware, detect, obs_is_running
 from .health import clear_status, probe
-from .install_obs import find_obs_exe, install_obs, launch_obs_clipkit, obs_exe_present, obs_is_installed
+from .install_obs import (
+    find_obs_exe,
+    fresh_install_obs,
+    install_obs,
+    launch_obs_clipkit,
+    obs_exe_present,
+    obs_is_installed,
+    reveal_obs_window,
+)
 from .keys import DEFAULT_BINDS, Hotkey, UserBinds, from_tk
 from .obs import PROFILE_NAME, apply_setup, default_output_dir
 from .paths import icon_file, mark_file
@@ -534,6 +542,38 @@ class ClipKitApp(tk.Tk):
         )
         tk.Frame(options, bg=PANEL, height=10).pack()
 
+        fresh = self._card(
+            right,
+            "Fresh OBS install",
+            "Use this if OBS is the wrong version, desktop audio keeps coming back, or the setup is a mess.",
+        )
+        tk.Label(
+            fresh,
+            text="Removes OBS and its settings, then installs the newest official OBS and applies ClipKit. Clip videos stay.",
+            bg=PANEL,
+            fg=MUTED,
+            font=(UI, 9),
+            wraplength=420,
+            justify="left",
+        ).pack(anchor="w", padx=20, pady=(0, 12))
+        self.fresh_btn = tk.Button(
+            fresh,
+            text="Remove OBS and install latest",
+            command=self.fresh_install,
+            bg=RAISED,
+            fg=TEXT,
+            activebackground=BRIGHT,
+            activeforeground=PRIMARY,
+            disabledforeground=MUTED,
+            relief="flat",
+            bd=0,
+            padx=16,
+            pady=10,
+            font=(UI, 10, "bold"),
+            cursor="hand2",
+        )
+        self.fresh_btn.pack(anchor="w", padx=20, pady=(0, 16))
+
         self._sync_ptt()
         self._sync_hook_bind()
         self._sync_record_bind()
@@ -699,6 +739,8 @@ class ClipKitApp(tk.Tk):
     def _set_busy(self, busy: bool, message: str | None = None) -> None:
         self._busy = busy
         self.apply_btn.configure(state="disabled" if busy else "normal", bg=RAISED if busy else PRIMARY_BTN)
+        if getattr(self, "fresh_btn", None):
+            self.fresh_btn.configure(state="disabled" if busy else "normal")
         if message:
             self._status.set(message)
 
@@ -729,6 +771,35 @@ class ClipKitApp(tk.Tk):
             threading.Thread(target=self._install_then_apply, daemon=True).start()
             return
         self._do_apply()
+
+    def fresh_install(self) -> None:
+        if self._busy:
+            return
+        folder = self._output.get().strip()
+        if not folder:
+            messagebox.showerror("Clips folder", "Pick a folder where clips should be saved.")
+            return
+        if not messagebox.askyesno(
+            "Fresh OBS install?",
+            "This closes OBS and deletes it from this PC, including OBS profiles and scenes.\n\n"
+            "Your clip videos and ClipKit options stay.\n\n"
+            "ClipKit then downloads the newest official OBS, installs it, and sets up clipping.\n\n"
+            "Windows will ask for permission — click Yes. Keep ClipKit open.\n\nContinue?",
+        ):
+            return
+        self._set_busy(True, "Removing OBS…")
+        threading.Thread(target=self._fresh_install_then_apply, daemon=True).start()
+
+    def _fresh_install_then_apply(self) -> None:
+        def status(message: str) -> None:
+            self.after(0, lambda m=message: self._status.set(m))
+
+        try:
+            fresh_install_obs(status)
+        except Exception as exc:  # noqa: BLE001
+            self.after(0, lambda: self._install_failed(exc))
+            return
+        self.after(0, self._after_obs_installed)
 
     def _install_then_apply(self) -> None:
         def status(message: str) -> None:
@@ -871,6 +942,7 @@ class ClipKitApp(tk.Tk):
             return
         expect = self._health_expect_replay
         info = probe(expect_replay=expect)
+        reveal_obs_window()
         self._health_tries += 1
         known = info.get("replay_known")
         done = bool(info.get("ok")) or self._health_tries >= 60
