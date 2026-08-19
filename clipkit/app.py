@@ -11,7 +11,7 @@ from tkinter import filedialog, messagebox, ttk
 from . import __version__
 from .hardware import Hardware, detect, obs_is_running
 from .health import clear_status, probe
-from .install_obs import find_obs_exe, install_obs, launch_obs_clipkit, obs_is_installed
+from .install_obs import find_obs_exe, install_obs, launch_obs_clipkit, obs_exe_present, obs_is_installed
 from .keys import DEFAULT_BINDS, Hotkey, UserBinds, from_tk
 from .obs import PROFILE_NAME, apply_setup, default_output_dir
 from .paths import icon_file, mark_file
@@ -149,6 +149,7 @@ class ClipKitApp(tk.Tk):
         self._health_tries = 0
         self._health_expect_replay = True
         self._health_apply_result: dict | None = None
+        self._obs_present: bool | None = None
         self._build_style()
         self._build()
         if self._saved:
@@ -615,10 +616,6 @@ class ClipKitApp(tk.Tk):
         self._pill_gpu.configure(text=hw.gpu_name or "Unknown")
         self._pill_cpu.configure(text=hw.cpu_name or "Unknown")
         self._pill_ram.configure(text=f"{hw.ram_gb:g} GB  •  {vram}")
-        if hw.obs_installed:
-            self._pill_obs.configure(text="Installed", fg=GREEN)
-        else:
-            self._pill_obs.configure(text="Will install", fg=AMBER)
         self.specs_label.configure(
             text=f"{hw.display_label}  ·  Recommended quality: {recommended.title()}"
         )
@@ -628,12 +625,7 @@ class ClipKitApp(tk.Tk):
             notes.insert(0, "Close OBS completely before applying.")
         self.notes_label.configure(text="\n".join(notes))
         self._sync_preset_copy()
-        if hw.obs_installed:
-            self.apply_btn.configure(text="Apply to OBS")
-            self._status.set("Ready. Pick your options, then Apply.")
-        else:
-            self.apply_btn.configure(text="Install OBS and set up")
-            self._status.set("OBS is missing. Apply will download the official installer, then configure it.")
+        self._sync_obs_presence(hw.obs_installed, update_status=True)
 
     def _sync_preset_copy(self) -> None:
         preset = self._presets.get(self._preset_id.get())
@@ -668,10 +660,33 @@ class ClipKitApp(tk.Tk):
         elif not running and shown:
             self.warn_bar.pack_forget()
 
+    def _sync_obs_presence(self, installed: bool | None = None, *, update_status: bool = False) -> None:
+        if installed is None:
+            installed = obs_exe_present()
+        if self._hw:
+            self._hw.obs_installed = installed
+            if not installed:
+                self._hw.obs_exe = None
+        changed = self._obs_present is not installed
+        self._obs_present = installed
+        if installed:
+            self._pill_obs.configure(text="Installed", fg=GREEN)
+            if not self._busy:
+                self.apply_btn.configure(text="Apply to OBS")
+            if update_status or (changed and not self._busy):
+                self._status.set("Ready. Pick your options, then Apply.")
+            return
+        self._pill_obs.configure(text="Will install", fg=AMBER)
+        if not self._busy:
+            self.apply_btn.configure(text="Install OBS and set up")
+        if update_status or (changed and not self._busy):
+            self._status.set("OBS is missing. Apply will download the official installer, then configure it.")
+
     def _poll_obs(self) -> None:
         if not self._busy:
             try:
                 self._set_obs_warning(obs_is_running())
+                self._sync_obs_presence()
             except Exception:
                 pass
         self.after(1500, self._poll_obs)
@@ -706,7 +721,8 @@ class ClipKitApp(tk.Tk):
                 "OBS Studio is not on this PC.\n\n"
                 "ClipKit will install OBS, then set up everything else automatically:\n"
                 "clips folder, keys, game audio, mic, replay buffer, and Windows start.\n\n"
-                "Windows may ask for permission.\n\nContinue?",
+                "Windows will ask for permission — click Yes. Keep ClipKit open.\n"
+                "It continues on its own after OBS finishes installing.\n\nContinue?",
             ):
                 return
             self._set_busy(True, "Installing OBS Studio…")
@@ -959,9 +975,15 @@ class ClipKitApp(tk.Tk):
 
 def run() -> None:
     from .notifications import register_toast_app
+    from .paths import is_frozen
     from .startup import install_clipkit_launcher_shortcuts, migrate_legacy_obs_startup
+    from .windows_app import ensure_windows_app
 
-    install_clipkit_launcher_shortcuts()
+    if is_frozen():
+        if not ensure_windows_app():
+            return
+    else:
+        install_clipkit_launcher_shortcuts()
     migrate_legacy_obs_startup()
     register_toast_app()
     app = ClipKitApp()

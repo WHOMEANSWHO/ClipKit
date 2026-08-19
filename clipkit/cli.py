@@ -14,11 +14,36 @@ def main(argv: list[str] | None = None) -> int:
         help="Print PC specs and the recommended preset, then exit",
     )
     parser.add_argument(
+        "--uninstall",
+        action="store_true",
+        help="Remove ClipKit from the Start menu and Windows Apps list",
+    )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Uninstall without asking",
+    )
+    parser.add_argument(
+        "--portable",
+        action="store_true",
+        help="Run this exe without installing it as a Windows app",
+    )
+    parser.add_argument(
         "--dry-run",
         metavar="DIR",
         help="Write a ClipKit profile into DIR instead of the real OBS config",
     )
     args = parser.parse_args(argv)
+
+    if args.uninstall:
+        from .windows_app import uninstall_windows_app
+
+        return uninstall_windows_app(quiet=args.quiet)
+
+    if args.portable:
+        import os
+
+        os.environ["CLIPKIT_PORTABLE"] = "1"
 
     if args.dry_run:
         from pathlib import Path

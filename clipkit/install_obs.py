@@ -7,16 +7,17 @@ import json
 import os
 import shutil
 import subprocess
-import tempfile
+import time
 import urllib.request
 import winreg
 from collections.abc import Callable, Iterable
+from ctypes import wintypes
 from pathlib import Path
 
 from .paths import app_dir
 
 GITHUB_LATEST = "https://api.github.com/repos/obsproject/obs-studio/releases/latest"
-USER_AGENT = "ClipKit/1.0 (https://github.com/WHOMEANSWHO/ClipKit)"
+USER_AGENT = "ClipKit/1.1 (https://github.com/WHOMEANSWHO/ClipKit)"
 WINGET_ID = "OBSProject.OBSStudio"
 OBS_EXE_NAMES = ("obs64.exe", "obs32.exe")
 _SKIP_PATH_PARTS = ("streamlabs", "windowsapps", "$recycle.bin", "system volume information")
@@ -113,14 +114,27 @@ def _first_existing(paths: Iterable[Path | None]) -> Path | None:
     return None
 
 
+def _forget_cached_path() -> None:
+    global _found_obs
+    _found_obs = None
+    cache = _cache_file()
+    try:
+        cache.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def _from_cache() -> Path | None:
     cache = _cache_file()
     if not cache.is_file():
         return None
     try:
-        return _exe_from_guess(cache.read_text(encoding="utf-8").strip())
+        found = _exe_from_guess(cache.read_text(encoding="utf-8").strip())
     except OSError:
-        return None
+        found = None
+    if found is None:
+        _forget_cached_path()
+    return found
 
 
 def _usual_locations() -> list[Path]:
@@ -352,8 +366,10 @@ def _from_drive_scan() -> Path | None:
 def find_obs_exe() -> Path | None:
     """Find obs64.exe in standard folders, registry, shortcuts, or other drives."""
     global _found_obs
-    if _found_obs is not None and _looks_like_obs(_found_obs):
-        return _found_obs
+    if _found_obs is not None:
+        if _looks_like_obs(_found_obs):
+            return _found_obs
+        _forget_cached_path()
 
     for getter in (
         _from_cache,
@@ -366,11 +382,28 @@ def find_obs_exe() -> Path | None:
         found = getter()
         if found:
             return _remember(found)
+    _forget_cached_path()
     return None
 
 
 def obs_is_installed() -> bool:
     return find_obs_exe() is not None
+
+
+def obs_exe_present() -> bool:
+    """Cheap check for the poller. Does not scan other drives."""
+    global _found_obs
+    if _found_obs is not None:
+        if _looks_like_obs(_found_obs):
+            return True
+        _forget_cached_path()
+    if _from_cache() is not None:
+        return True
+    found = _first_existing(_usual_locations())
+    if found:
+        _remember(found)
+        return True
+    return False
 
 
 def launch_obs_clipkit() -> bool:
@@ -430,14 +463,14 @@ def _install_with_winget(status: StatusFn) -> bool:
                 "--accept-source-agreements",
                 "--disable-interactivity",
             ],
-            timeout=900,
+            timeout=180,
         )
     except (OSError, subprocess.TimeoutExpired):
         return False
     # 0 = installed, -1978335189 (0x8A15002B) often means already installed
-    if result.returncode in {0, -1978335189} or find_obs_exe():
-        return True
-    return False
+    if result.returncode in {0, -1978335189}:
+        return _wait_for_obs(status, 60) is not None
+    return _wait_for_obs(status, 15) is not None
 
 
 def _latest_installer_url(status: StatusFn) -> str:
@@ -455,6 +488,7 @@ def _latest_installer_url(status: StatusFn) -> str:
 
 def _download(url: str, dest: Path, status: StatusFn) -> None:
     status("Downloading OBS Studio…")
+    dest.parent.mkdir(parents=True, exist_ok=True)
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(request, timeout=60) as response, dest.open("wb") as handle:
         total = int(response.headers.get("Content-Length") or 0)
@@ -471,17 +505,85 @@ def _download(url: str, dest: Path, status: StatusFn) -> None:
         raise RuntimeError("OBS download looked incomplete. Check your internet and try again.")
 
 
-def _silent_install(installer: Path, status: StatusFn) -> None:
-    status("Installing OBS Studio… Windows may ask for permission.")
-    # NSIS silent install. /S must be capital S.
-    result = subprocess.run(
-        [str(installer), "/S"],
-        timeout=900,
-    )
-    if result.returncode not in {0, None} and not find_obs_exe():
-        raise RuntimeError(
-            "OBS installer did not finish. If a permission prompt appeared, accept it and try again."
-        )
+class _SHELLEXECUTEINFOW(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("fMask", wintypes.ULONG),
+        ("hwnd", wintypes.HWND),
+        ("lpVerb", wintypes.LPCWSTR),
+        ("lpFile", wintypes.LPCWSTR),
+        ("lpParameters", wintypes.LPCWSTR),
+        ("lpDirectory", wintypes.LPCWSTR),
+        ("nShow", ctypes.c_int),
+        ("hInstApp", wintypes.HINSTANCE),
+        ("lpIDList", ctypes.c_void_p),
+        ("lpClass", wintypes.LPCWSTR),
+        ("hkeyClass", wintypes.HKEY),
+        ("dwHotKey", wintypes.DWORD),
+        ("hIcon", wintypes.HANDLE),
+        ("hProcess", wintypes.HANDLE),
+    ]
+
+
+def _installer_path() -> Path:
+    local = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
+    return local / "ClipKit" / "OBS-Studio-Installer.exe"
+
+
+def _run_elevated(path: Path, params: str, status: StatusFn) -> None:
+    """Start the installer as admin and wait until that process exits."""
+    status("Windows may ask for permission. Click Yes, then wait — ClipKit keeps going.")
+    see_mask_nocloseprocess = 0x00000040
+    info = _SHELLEXECUTEINFOW()
+    info.cbSize = ctypes.sizeof(info)
+    info.fMask = see_mask_nocloseprocess
+    info.lpVerb = "runas"
+    info.lpFile = str(path)
+    info.lpParameters = params
+    info.nShow = 1
+    shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+    if not shell32.ShellExecuteExW(ctypes.byref(info)):
+        err = ctypes.get_last_error()
+        if err in {1223, 5}:
+            raise RuntimeError(
+                "The Windows permission prompt was closed. Click Apply again and choose Yes."
+            )
+        raise RuntimeError(f"Could not start the OBS installer (Windows error {err}).")
+    handle = info.hProcess
+    if not handle:
+        return
+    try:
+        waited = ctypes.windll.kernel32.WaitForSingleObject(handle, 900_000)
+        if waited == 0x00000102:
+            raise RuntimeError(
+                "The OBS installer is still running after 15 minutes. Finish it, then click Apply again."
+            )
+    finally:
+        ctypes.windll.kernel32.CloseHandle(handle)
+
+
+def _wait_for_obs(status: StatusFn, seconds: int = 180) -> Path | None:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        _forget_cached_path()
+        found = _first_existing(_usual_locations()) or _from_registry()
+        if found:
+            return _remember(found)
+        left = max(0, int(deadline - time.monotonic()))
+        status(f"Waiting for OBS to finish installing… {left}s")
+        time.sleep(2)
+    _forget_cached_path()
+    return find_obs_exe()
+
+
+def _run_official_installer(installer: Path, status: StatusFn) -> Path | None:
+    _run_elevated(installer, "/S", status)
+    found = _wait_for_obs(status, 90)
+    if found:
+        return found
+    status("Opening the OBS installer window. Finish it; ClipKit will continue after it closes.")
+    _run_elevated(installer, "", status)
+    return _wait_for_obs(status, 300)
 
 
 def install_obs(status: StatusFn | None = None) -> Path:
@@ -496,15 +598,18 @@ def install_obs(status: StatusFn | None = None) -> Path:
         if found:
             return found
 
+    installer = _installer_path()
     url = _latest_installer_url(status)
-    with tempfile.TemporaryDirectory(prefix="clipkit-obs-") as tmp:
-        installer = Path(tmp) / "OBS-Studio-Installer.exe"
-        _download(url, installer, status)
-        _silent_install(installer, status)
+    _download(url, installer, status)
+    found = _run_official_installer(installer, status)
+    if found:
+        try:
+            installer.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return found
 
-    found = find_obs_exe()
-    if not found:
-        raise RuntimeError(
-            "OBS installed, but obs64.exe was not found. Open OBS once from the Start menu, then run ClipKit again."
-        )
-    return found
+    raise RuntimeError(
+        "OBS installer ran, but obs64.exe was not found. "
+        "Open OBS once from the Start menu, then run ClipKit again."
+    )
