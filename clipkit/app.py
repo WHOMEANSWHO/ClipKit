@@ -30,7 +30,7 @@ from .install_obs import (
     obs_is_installed,
     reveal_obs_window,
 )
-from .keys import DEFAULT_BINDS, Hotkey, UserBinds, from_tk
+from .keys import DEFAULT_BINDS, Hotkey, UserBinds, from_tk, mouse_button_held
 from .obs import PROFILE_NAME, apply_setup, default_output_dir
 from .paths import icon_file, mark_file
 from .presets import (
@@ -43,7 +43,7 @@ from .presets import (
     all_presets,
     recommend_id,
 )
-from .settings import binds_from_settings, load_settings, save_settings, settings_from_app
+from .settings import binds_from_settings, load_settings, save_ptt_config, save_settings, settings_from_app
 
 BG = "#0b1326"
 PANEL = "#171f33"
@@ -99,6 +99,17 @@ class KeybindButton(tk.Button):
         self.bind_all("<ButtonPress-4>", self._on_mouse)
         self.bind_all("<ButtonPress-5>", self._on_mouse)
         self.focus_set()
+        self.after(120, self._poll_mouse)
+
+    def _poll_mouse(self) -> None:
+        if not self._listening:
+            return
+        held = mouse_button_held()
+        if held is not None:
+            self.hotkey = held
+            self._stop()
+            return
+        self.after(30, self._poll_mouse)
 
     def _stop(self) -> None:
         self.unbind_all("<KeyPress>")
@@ -576,6 +587,15 @@ class ClipKitApp(tk.Tk):
             font=("Segoe UI", 9),
             wraplength=420,
             justify="left",
+        ).pack(anchor="w", padx=16, pady=(0, 4))
+        tk.Label(
+            self.ptt_keys,
+            text="Leave OBS Mic push-to-talk off. ClipKit reads the buttons itself, including in-game.",
+            bg=PANEL,
+            fg=MUTED,
+            font=("Segoe UI", 9),
+            wraplength=420,
+            justify="left",
         ).pack(anchor="w", padx=16, pady=(0, 12))
 
         options = self._card(right, "Extras", "Leave these on unless you know you want them off.")
@@ -590,7 +610,7 @@ class ClipKitApp(tk.Tk):
         )
         self._check(
             options,
-            "Windows notification when a clip saves (works in fullscreen)",
+            "Windows notification when a clip saves (works in fullscreen, ClipKit does not need to stay installed)",
             self._show_notifications,
         )
         self._check(
@@ -1063,6 +1083,7 @@ class ClipKitApp(tk.Tk):
                     show_popup=self._show_popup.get(),
                 )
             )
+            save_ptt_config(self._current_binds())
         except OSError:
             pass
 
@@ -1269,7 +1290,8 @@ class ClipKitApp(tk.Tk):
 
 
 def run() -> None:
-    from .notifications import register_toast_app
+    from .install_obs import find_obs_exe
+    from .notifications import install_toast_identity
     from .paths import is_frozen, leave_extract_dir
     from .startup import install_clipkit_launcher_shortcuts, migrate_legacy_obs_startup
     from .windows_app import ensure_windows_app
@@ -1282,7 +1304,7 @@ def run() -> None:
     else:
         install_clipkit_launcher_shortcuts()
     migrate_legacy_obs_startup()
-    register_toast_app()
+    install_toast_identity(find_obs_exe())
     app = ClipKitApp()
     app.mainloop()
     leave_extract_dir()

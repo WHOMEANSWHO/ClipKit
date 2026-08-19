@@ -6,7 +6,11 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Aumid = "ClipKit.Desktop"
+$Aumids = @(
+    "ClipKit.Clips",
+    '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe',
+    "ClipKit.Desktop"
+)
 
 function Xml-Escape([string]$text) {
     if ($null -eq $text) { return "" }
@@ -14,18 +18,20 @@ function Xml-Escape([string]$text) {
 }
 
 function Register-ClipKitToastApp {
-    $idPath = "HKCU:\Software\Classes\AppUserModelId\$Aumid"
-    if (-not (Test-Path $idPath)) {
-        New-Item -Path $idPath -Force | Out-Null
+    foreach ($id in @("ClipKit.Clips", "ClipKit.Desktop")) {
+        $idPath = "HKCU:\Software\Classes\AppUserModelId\$id"
+        if (-not (Test-Path $idPath)) {
+            New-Item -Path $idPath -Force | Out-Null
+        }
+        New-ItemProperty -Path $idPath -Name "DisplayName" -Value "ClipKit" -PropertyType String -Force | Out-Null
+        $notifyPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\$id"
+        if (-not (Test-Path $notifyPath)) {
+            New-Item -Path $notifyPath -Force | Out-Null
+        }
+        New-ItemProperty -Path $notifyPath -Name "Enabled" -Value 1 -PropertyType DWord -Force | Out-Null
+        New-ItemProperty -Path $notifyPath -Name "ShowInActionCenter" -Value 1 -PropertyType DWord -Force | Out-Null
+        New-ItemProperty -Path $notifyPath -Name "AllowContentAboveLock" -Value 1 -PropertyType DWord -Force | Out-Null
     }
-    New-ItemProperty -Path $idPath -Name "DisplayName" -Value "ClipKit" -PropertyType String -Force | Out-Null
-    $notifyPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\$Aumid"
-    if (-not (Test-Path $notifyPath)) {
-        New-Item -Path $notifyPath -Force | Out-Null
-    }
-    New-ItemProperty -Path $notifyPath -Name "Enabled" -Value 1 -PropertyType DWord -Force | Out-Null
-    New-ItemProperty -Path $notifyPath -Name "ShowInActionCenter" -Value 1 -PropertyType DWord -Force | Out-Null
-    New-ItemProperty -Path $notifyPath -Name "AllowContentAboveLock" -Value 1 -PropertyType DWord -Force | Out-Null
 }
 
 function Show-WindowsToast([string]$heading, [string]$body) {
@@ -53,10 +59,7 @@ function Show-WindowsToast([string]$heading, [string]$body) {
     $toast = [Windows.UI.Notifications.ToastNotification]::new($doc)
     $toast.ExpirationTime = [DateTimeOffset]::Now.AddSeconds(6)
 
-    $notifiers = @(
-        $Aumid,
-        '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe'
-    )
+    $notifiers = $Aumids
     foreach ($id in $notifiers) {
         try {
             [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($id).Show($toast)

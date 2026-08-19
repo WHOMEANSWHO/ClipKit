@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import json
 from dataclasses import dataclass
 
@@ -186,6 +187,18 @@ def from_tk(event) -> Hotkey | None:
 
 
 def from_modifiers_only(event) -> Hotkey | None:
+    return None
+
+
+def mouse_button_held() -> Hotkey | None:
+    """Side / middle mouse via Win32 — Tk often misses Mouse 4 and Mouse 5."""
+    user32 = ctypes.windll.user32
+    if user32.GetAsyncKeyState(0x05) & 0x8000:
+        return Hotkey("OBS_KEY_MOUSE4")
+    if user32.GetAsyncKeyState(0x06) & 0x8000:
+        return Hotkey("OBS_KEY_MOUSE5")
+    if user32.GetAsyncKeyState(0x04) & 0x8000:
+        return Hotkey("OBS_KEY_MOUSE3")
     return None
 
 

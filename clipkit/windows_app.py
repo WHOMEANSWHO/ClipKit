@@ -153,28 +153,40 @@ def _remove_shortcuts() -> None:
                 pass
 
 
+def _hidden_flags() -> int:
+    return subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+
+
+def _hidden_startup() -> subprocess.STARTUPINFO | None:
+    if not hasattr(subprocess, "STARTUPINFO"):
+        return None
+    startup = subprocess.STARTUPINFO()
+    startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startup.wShowWindow = 0
+    return startup
+
+
 def _schedule_delete_folder(folder: Path) -> None:
-    quoted = str(folder).replace('"', "")
-    flags = 0
-    if hasattr(subprocess, "DETACHED_PROCESS"):
-        flags |= subprocess.DETACHED_PROCESS
-    if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
-        flags |= subprocess.CREATE_NEW_PROCESS_GROUP
-    if hasattr(subprocess, "CREATE_NO_WINDOW"):
-        flags |= subprocess.CREATE_NO_WINDOW
-    startup = None
-    if hasattr(subprocess, "STARTUPINFO"):
-        startup = subprocess.STARTUPINFO()
-        startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startup.wShowWindow = 0
+    """Delete the install folder after this exe has exited, with no console window."""
+    quoted = str(folder).replace("'", "''")
     subprocess.Popen(
-        ["cmd.exe", "/c", f'ping 127.0.0.1 -n 4 >nul & rmdir /s /q "{quoted}"'],
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-WindowStyle",
+            "Hidden",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            f"Start-Sleep -Seconds 3; Remove-Item -LiteralPath '{quoted}' -Recurse -Force -ErrorAction SilentlyContinue",
+        ],
         shell=False,
-        creationflags=flags,
+        creationflags=_hidden_flags(),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        startupinfo=startup,
+        startupinfo=_hidden_startup(),
+        close_fds=True,
     )
 
 

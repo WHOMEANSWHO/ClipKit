@@ -17,6 +17,25 @@ def last_game_path() -> Path:
     return Path.home() / "AppData" / "Roaming" / "ClipKit" / "last-game.json"
 
 
+def ptt_config_path() -> Path:
+    return Path.home() / "AppData" / "Roaming" / "ClipKit" / "ptt.json"
+
+
+def save_ptt_config(binds: UserBinds) -> None:
+    path = ptt_config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "enabled": binds.ptt_enabled,
+                "keys": [key.obs_key for key in binds.ptt_keys()[:2]],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
 def load_last_game() -> dict:
     path = last_game_path()
     if not path.is_file():
@@ -90,6 +109,8 @@ def binds_from_settings(data: dict) -> UserBinds:
             ptt.append(_hotkey_from_dict(item, defaults[min(index, len(defaults) - 1)]))
     while len(ptt) < 2:
         ptt.append(defaults[len(ptt)])
+    if {key.obs_key for key in ptt[:2]} == {"OBS_KEY_MOUSE3", "OBS_KEY_MOUSE4"}:
+        ptt = list(defaults)
     mic = str(data.get("mic_mode") or DEFAULT_BINDS.mic_mode)
     if mic not in {"open", "ptt", "off"}:
         mic = DEFAULT_BINDS.mic_mode

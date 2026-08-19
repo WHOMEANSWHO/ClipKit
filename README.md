@@ -13,7 +13,7 @@ People in a Discord community can run **one file**. They do not need Python. The
 - Desktop / Discord audio left out
 - Clips sorted by game. FiveM goes into `FiveM\Server name`. Other games get their own folder, for example `Fortnite`
 - Files named like `Clip_Server_Name_18-08-26_23-59-12.mp4`
-- Windows notification and/or an on-screen popup when a clip or recording saves
+- Windows notification and/or an on-screen popup when a clip or recording saves. After Apply, ClipKit does not need to stay installed for those notifications.
 - **Test clip** saves the buffer and opens the clips folder so you know it works
 - **Open** next to the clips path shows that folder
 - Health check names the hooked game, not only whether OBS and the replay buffer are on
@@ -86,7 +86,8 @@ python build.py
 
 ## Notes
 
-- ClipKit installs for your user to `%LOCALAPPDATA%\Programs\ClipKit`. Uninstall from **Settings → Apps**.
+- ClipKit installs for your user to `%LOCALAPPDATA%\Programs\ClipKit`. Uninstall from **Settings → Apps**. After Apply, clip notifications still work without ClipKit staying installed.
+- Push to talk is handled by ClipKit, not OBS Mic hotkeys. Leave OBS Mic push-to-talk off.
 - OBS must be fully closed while ClipKit applies settings.
 - ClipKit searches common install folders, the registry, shortcuts, and other drives for OBS before it installs a new copy.
 - A backup of `user.ini` is stored in `%APPDATA%\obs-studio\clipkit-backups\`.

@@ -13,10 +13,10 @@ from pathlib import Path
 from .install_obs import find_obs_exe
 from .keys import DEFAULT_BINDS, Hotkey, UserBinds
 from .audio import list_capture_devices, pick_microphone
-from .notifications import register_toast_app
+from .notifications import install_toast_identity
 from .paths import scripts_dir as repo_scripts_dir
 from .presets import Preset
-from .settings import load_last_game
+from .settings import load_last_game, save_ptt_config
 from .startup import install_obs_windows_startup, remove_obs_windows_startup
 
 PROFILE_NAME = "ClipKit"
@@ -806,7 +806,8 @@ def apply_setup(
         remove_obs_windows_startup()
 
     if show_notifications:
-        register_toast_app()
+        install_toast_identity(find_obs_exe(), refresh_shortcut=True)
+    save_ptt_config(binds)
 
     mic_label = {"open": "always on", "ptt": "off", "off": "muted"}.get(binds.mic_mode, binds.mic_mode)
     if binds.ptt_enabled:
