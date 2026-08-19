@@ -27,8 +27,10 @@ Quality is **Low / Medium / High** from the PC’s GPU and display. Bitrate defa
 
 ## Download
 
-- **Finished app:** [release/ClipKit.exe](https://github.com/WHOMEANSWHO/ClipKit/raw/master/release/ClipKit.exe) — one file, no Python. Also on [Releases](https://github.com/WHOMEANSWHO/ClipKit/releases).
+- **Finished app:** [ClipKit.exe](https://github.com/WHOMEANSWHO/ClipKit/releases/latest/download/ClipKit.exe) — latest [Release](https://github.com/WHOMEANSWHO/ClipKit/releases/latest), one file, no Python.
 - **Unbuilt source:** the rest of this repo (`clipkit/`, `scripts/`, `build.py`).
+
+Do not download `release/ClipKit.exe` from the repo tree. That copy can sit behind the newest Release.
 
 ## How to use it
 
@@ -73,7 +75,7 @@ python clipkit.py --detect
 python build.py
 ```
 
-`build.py` writes `dist\ClipKit.exe` and copies it to `release\ClipKit.exe` (the file on GitHub).
+`build.py` writes `dist\ClipKit.exe` and copies it to `release\ClipKit.exe`. Ship that file as a GitHub Release asset — that is what the download link above uses.
 
 `--detect` prints GPU, RAM, and the recommended preset without changing OBS.
 
