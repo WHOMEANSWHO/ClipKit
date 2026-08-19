@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -15,6 +16,27 @@ def app_dir() -> Path:
     if is_frozen():
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parent.parent
+
+
+def leave_extract_dir() -> None:
+    """Onefile PyInstaller cannot delete _MEI* if our working directory is inside it."""
+    if not is_frozen():
+        return
+    meipass = getattr(sys, "_MEIPASS", None)
+    candidates = [
+        app_dir(),
+        Path.home(),
+        Path(os.environ.get("SystemRoot", r"C:\Windows")),
+    ]
+    for target in candidates:
+        try:
+            resolved = target.resolve()
+            if meipass and resolved == Path(meipass).resolve():
+                continue
+            os.chdir(resolved)
+            return
+        except OSError:
+            continue
 
 
 def resource_dir() -> Path:

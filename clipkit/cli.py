@@ -7,6 +7,9 @@ import sys
 
 
 def main(argv: list[str] | None = None) -> int:
+    from .paths import leave_extract_dir
+
+    leave_extract_dir()
     parser = argparse.ArgumentParser(description="ClipKit OBS clipping setup")
     parser.add_argument(
         "--detect",

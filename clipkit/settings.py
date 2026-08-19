@@ -13,6 +13,31 @@ def settings_path() -> Path:
     return Path.home() / "AppData" / "Roaming" / "ClipKit" / "settings.json"
 
 
+def last_game_path() -> Path:
+    return Path.home() / "AppData" / "Roaming" / "ClipKit" / "last-game.json"
+
+
+def load_last_game() -> dict:
+    path = last_game_path()
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    exe = str(data.get("exe") or "").strip()
+    if not exe:
+        return {}
+    return {
+        "exe": exe,
+        "class": str(data.get("class") or "").strip(),
+        "title": str(data.get("title") or "").strip(),
+        "family": str(data.get("family") or "").strip(),
+    }
+
+
 def _hotkey_to_dict(key: Hotkey) -> dict:
     return {
         "obs_key": key.obs_key,
@@ -83,6 +108,8 @@ def binds_from_settings(data: dict) -> UserBinds:
             DEFAULT_BINDS.hook_game,
         ),
         mic_mode=mic,
+        mic_device_id=str(data.get("mic_device_id") or ""),
+        mic_device_name=str(data.get("mic_device_name") or ""),
         ptt=ptt,
     )
 
@@ -113,6 +140,8 @@ def settings_from_app(
         "bitrate": bitrate if bitrate in allowed_bitrate else DEFAULT_BITRATE,
         "capture": capture if capture in {"hotkey", "any"} else "hotkey",
         "mic_mode": binds.mic_mode,
+        "mic_device_id": binds.mic_device_id,
+        "mic_device_name": binds.mic_device_name,
         "install_sorter": install_sorter,
         "install_autostart": install_autostart,
         "start_with_windows": start_with_windows,

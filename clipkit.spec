@@ -23,7 +23,7 @@ a = Analysis(
     ],
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=[str(spec_dir / "packaging" / "pyi_rth_clipkit_cwd.py")],
     excludes=[],
     noarchive=False,
 )

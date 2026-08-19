@@ -9,7 +9,8 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from . import __version__
-from .hardware import Hardware, detect, obs_is_running
+from .audio import CaptureDevice, pick_microphone
+from .hardware import Hardware, detect, load_cached_hardware, obs_is_running
 from .health import clear_status, probe
 from .install_obs import (
     find_obs_exe,
@@ -142,6 +143,8 @@ class ClipKitApp(tk.Tk):
         self._just_installed = False
         self._capture = tk.StringVar(value="hotkey")
         self._mic_mode = tk.StringVar(value="ptt")
+        self._mic_device = tk.StringVar(value="")
+        self._mic_devices: list[CaptureDevice] = []
         self._install_sorter = tk.BooleanVar(value=True)
         self._install_autostart = tk.BooleanVar(value=True)
         self._start_with_windows = tk.BooleanVar(value=True)
@@ -158,14 +161,20 @@ class ClipKitApp(tk.Tk):
         self._health_expect_replay = True
         self._health_apply_result: dict | None = None
         self._obs_present: bool | None = None
+        self._poll_n = 0
+        self._detect_gen = 0
         self._build_style()
         self._build()
         if self._saved:
             self._restore_settings()
             self._settings_restored = True
         self.protocol("WM_DELETE_WINDOW", self._on_close)
-        self.after(100, self.refresh_hardware)
-        self.after(1500, self._poll_obs)
+        cached = load_cached_hardware()
+        if cached is not None:
+            self._apply_hardware(cached, status_ready=False)
+            self._status.set("Checking hardware…")
+        self.after(50, self.refresh_hardware)
+        self.after(2500, self._poll_obs)
 
     def _set_app_icon(self) -> None:
         ico = icon_file()
@@ -398,7 +407,18 @@ class ClipKitApp(tk.Tk):
             canvas.itemconfigure(window_id, width=event.width)
 
         canvas.bind("<Configure>", _stretch)
-        canvas.bind_all("<MouseWheel>", lambda event: canvas.yview_scroll(int(-event.delta / 120), "units"))
+
+        def _on_mousewheel(event) -> None:
+            try:
+                x, y = canvas.winfo_pointerxy()
+                left = canvas.winfo_rootx()
+                top = canvas.winfo_rooty()
+                if left <= x <= left + canvas.winfo_width() and top <= y <= top + canvas.winfo_height():
+                    canvas.yview_scroll(int(-event.delta / 120), "units")
+            except tk.TclError:
+                pass
+
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
         canvas.pack(side="left", fill="both", expand=True)
         scroll.pack(side="right", fill="y")
         self._canvas = canvas
@@ -471,9 +491,18 @@ class ClipKitApp(tk.Tk):
             (("open", "Always on"), ("ptt", "PTT"), ("off", "Mic off")),
             self._sync_ptt,
         )
+        self._mic_pick_host = tk.Frame(choices, bg=PANEL)
+        self._mic_pick_host.pack(fill="x")
+        tk.Label(
+            self._mic_pick_host,
+            text="Finding microphones…",
+            bg=PANEL,
+            fg=MUTED,
+            font=(UI, 9),
+        ).pack(anchor="w", padx=20, pady=(0, 4))
         tk.Label(
             choices,
-            text="Game audio only. Mic is a separate track.",
+            text="Game audio on track 1. ClipKit picks your real mic for track 2 — not Windows Default / Chat Mix.",
             bg=PANEL,
             fg=MUTED,
             font=(MONO, 8),
@@ -498,7 +527,7 @@ class ClipKitApp(tk.Tk):
         self.hook_bind = self._bind_row(self.hook_block, "Switch game", DEFAULT_BINDS.hook_game)
         tk.Label(
             self.hook_block,
-            text="Press this in-game so clips follow that title.",
+            text="Press this once in-game. ClipKit remembers it, including any FiveM shortcut.",
             bg=PANEL,
             fg=MUTED,
             font=("Segoe UI", 9),
@@ -512,7 +541,7 @@ class ClipKitApp(tk.Tk):
         self.ptt_bind2 = self._bind_row(self.ptt_keys, "Talk (2nd button)", ptt_defaults[1])
         tk.Label(
             self.ptt_keys,
-            text="Only used for Push to talk. Side mouse buttons are fine.",
+            text="Hold a side mouse button to talk. ClipKit reads the button even in-game.",
             bg=PANEL,
             fg=MUTED,
             font=("Segoe UI", 9),
@@ -607,6 +636,8 @@ class ClipKitApp(tk.Tk):
             record_toggle=self.record_bind.hotkey,
             hook_game=self.hook_bind.hotkey,
             mic_mode=self._mic_mode.get(),
+            mic_device_id=self._mic_device.get().strip(),
+            mic_device_name=self._selected_mic_name(),
             ptt=[self.ptt_bind.hotkey, self.ptt_bind2.hotkey],
         )
 
@@ -633,13 +664,44 @@ class ClipKitApp(tk.Tk):
         self._sync_preset_copy()
 
     def refresh_hardware(self) -> None:
+        self._detect_gen += 1
+        gen = self._detect_gen
+        threading.Thread(target=self._detect_hardware_bg, args=(gen,), daemon=True).start()
+
+    def _detect_hardware_bg(self, gen: int) -> None:
         try:
-            self._hw = detect()
+            hw = detect()
         except Exception as exc:  # noqa: BLE001
-            self._status.set(f"Hardware scan failed: {exc}")
-            self.specs_label.configure(text="Could not read PC specs. You can still pick a preset.")
-            self._hw = Hardware()
-        hw = self._hw
+            self.after(0, lambda e=exc, g=gen: self._hardware_failed(e, g))
+            return
+        self.after(0, lambda h=hw, g=gen: self._hardware_ready(h, g))
+
+    def _hardware_failed(self, exc: Exception, gen: int) -> None:
+        if gen != self._detect_gen:
+            return
+        self._status.set(f"Hardware scan failed: {exc}")
+        self.specs_label.configure(text="Could not read PC specs. You can still pick a preset.")
+        if self._hw is None:
+            self._apply_hardware(Hardware(), status_ready=True)
+
+    def _hardware_ready(self, hw: Hardware, gen: int) -> None:
+        if gen != self._detect_gen:
+            return
+        self._apply_hardware(hw, status_ready=True)
+        if not hw.obs_installed:
+            threading.Thread(target=self._deep_find_obs, args=(gen,), daemon=True).start()
+
+    def _deep_find_obs(self, gen: int) -> None:
+        found = find_obs_exe(deep=True) is not None
+        self.after(0, lambda f=found, g=gen: self._deep_find_done(f, g))
+
+    def _deep_find_done(self, found: bool, gen: int) -> None:
+        if gen != self._detect_gen or self._busy:
+            return
+        self._sync_obs_presence(found, update_status=True)
+
+    def _apply_hardware(self, hw: Hardware, *, status_ready: bool = True) -> None:
+        self._hw = hw
         self._presets = all_presets(
             hw,
             replay_seconds=int(self._clip_seconds.get()),
@@ -665,7 +727,43 @@ class ClipKitApp(tk.Tk):
             notes.insert(0, "Close OBS completely before applying.")
         self.notes_label.configure(text="\n".join(notes))
         self._sync_preset_copy()
-        self._sync_obs_presence(hw.obs_installed, update_status=True)
+        self._sync_obs_presence(hw.obs_installed, update_status=status_ready)
+        self._refresh_mic_devices(hw.mics)
+
+    def _selected_mic_name(self) -> str:
+        current = self._mic_device.get().strip().lower()
+        for device in self._mic_devices:
+            if device.device_id.lower() == current:
+                return device.name
+        return str(self._saved.get("mic_device_name") or "") if self._saved else ""
+
+    def _refresh_mic_devices(self, devices: list[CaptureDevice] | None) -> None:
+        host = getattr(self, "_mic_pick_host", None)
+        if host is None:
+            return
+        self._mic_devices = list(devices or [])
+        preferred = self._mic_device.get().strip() or str((self._saved or {}).get("mic_device_id") or "")
+        chosen = pick_microphone(self._mic_devices, preferred)
+        if chosen:
+            self._mic_device.set(chosen.device_id)
+        for child in host.winfo_children():
+            child.destroy()
+        self._chip_groups = [
+            (store, variable) for store, variable in self._chip_groups if variable is not self._mic_device
+        ]
+        if not self._mic_devices:
+            tk.Label(
+                host,
+                text="No microphone found. OBS will use Windows Default.",
+                bg=PANEL,
+                fg=AMBER,
+                font=(UI, 9),
+                wraplength=520,
+                justify="left",
+            ).pack(anchor="w", padx=20, pady=(0, 4))
+            return
+        options = [(device.device_id, device.short_name) for device in self._mic_devices]
+        self._chips(host, "Mic input", self._mic_device, options)
 
     def _sync_preset_copy(self) -> None:
         preset = self._presets.get(self._preset_id.get())
@@ -726,10 +824,12 @@ class ClipKitApp(tk.Tk):
         if not self._busy:
             try:
                 self._set_obs_warning(obs_is_running())
-                self._sync_obs_presence()
+                self._poll_n += 1
+                if not self._obs_present or self._poll_n % 4 == 0:
+                    self._sync_obs_presence()
             except Exception:
                 pass
-        self.after(1500, self._poll_obs)
+        self.after(2500, self._poll_obs)
 
     def _browse(self) -> None:
         chosen = filedialog.askdirectory(title="Folder for clips")
@@ -833,7 +933,7 @@ class ClipKitApp(tk.Tk):
         self._show_popup.set(True)
         self._just_installed = True
         self._set_busy(False)
-        self.refresh_hardware()
+        self._sync_obs_presence(True, update_status=True)
         self._do_apply()
 
     def _persist_settings(self) -> None:
@@ -881,6 +981,8 @@ class ClipKitApp(tk.Tk):
             self._capture.set(str(data["capture"]))
         binds = binds_from_settings(data)
         self._mic_mode.set(binds.mic_mode)
+        if binds.mic_device_id:
+            self._mic_device.set(binds.mic_device_id)
         self.save_bind.set_hotkey(binds.save)
         self.replay_bind.set_hotkey(binds.replay_toggle)
         self.record_bind.set_hotkey(binds.record_toggle)
@@ -909,7 +1011,11 @@ class ClipKitApp(tk.Tk):
     def _on_close(self) -> None:
         if self._settings_restored:
             self._persist_settings()
+        self._app_icon = None
         self.destroy()
+        from .paths import leave_extract_dir
+
+        leave_extract_dir()
 
     def _health_verdict(self, info: dict, *, expect_replay: bool) -> tuple[str, bool]:
         lines = [
@@ -1000,7 +1106,7 @@ class ClipKitApp(tk.Tk):
                     "On-screen popup: on" if result.get("popup") else "On-screen popup: off",
                     startup_line,
                     "",
-                    "FiveM: press the switch-game key in-game. Run OBS as administrator if the preview stays black or game audio is missing.",
+                    "FiveM: press the switch-game key once. ClipKit remembers it for next time, even if you use a different FiveM shortcut. Run OBS as administrator if the preview stays black or game audio is missing.",
                 ]
             ),
         )
@@ -1047,12 +1153,14 @@ class ClipKitApp(tk.Tk):
 
 def run() -> None:
     from .notifications import register_toast_app
-    from .paths import is_frozen
+    from .paths import is_frozen, leave_extract_dir
     from .startup import install_clipkit_launcher_shortcuts, migrate_legacy_obs_startup
     from .windows_app import ensure_windows_app
 
+    leave_extract_dir()
     if is_frozen():
         if not ensure_windows_app():
+            leave_extract_dir()
             return
     else:
         install_clipkit_launcher_shortcuts()
@@ -1060,3 +1168,4 @@ def run() -> None:
     register_toast_app()
     app = ClipKitApp()
     app.mainloop()
+    leave_extract_dir()

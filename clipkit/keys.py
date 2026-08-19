@@ -120,6 +120,8 @@ class UserBinds:
     record_toggle: Hotkey
     hook_game: Hotkey
     mic_mode: str = "ptt"  # open, ptt, off
+    mic_device_id: str = ""
+    mic_device_name: str = ""
     ptt: list[Hotkey] | None = None
 
     @property
@@ -129,7 +131,7 @@ class UserBinds:
     def ptt_keys(self) -> list[Hotkey]:
         if self.ptt:
             return list(self.ptt)
-        return [Hotkey("OBS_KEY_MOUSE3"), Hotkey("OBS_KEY_MOUSE4")]
+        return [Hotkey("OBS_KEY_MOUSE4"), Hotkey("OBS_KEY_MOUSE5")]
 
 
 DEFAULT_BINDS = UserBinds(
@@ -138,7 +140,9 @@ DEFAULT_BINDS = UserBinds(
     record_toggle=Hotkey("OBS_KEY_NUMPLUS"),
     hook_game=Hotkey("OBS_KEY_F7"),
     mic_mode="ptt",
-    ptt=[Hotkey("OBS_KEY_MOUSE3"), Hotkey("OBS_KEY_MOUSE4")],
+    mic_device_id="",
+    mic_device_name="",
+    ptt=[Hotkey("OBS_KEY_MOUSE4"), Hotkey("OBS_KEY_MOUSE5")],
 )
 
 

@@ -14,10 +14,11 @@ from collections.abc import Callable, Iterable
 from ctypes import wintypes
 from pathlib import Path
 
+from . import __version__
 from .paths import app_dir
 
 GITHUB_LATEST = "https://api.github.com/repos/obsproject/obs-studio/releases/latest"
-USER_AGENT = "ClipKit/1.2.1 (https://github.com/WHOMEANSWHO/ClipKit)"
+USER_AGENT = f"ClipKit/{__version__} (https://github.com/WHOMEANSWHO/ClipKit)"
 WINGET_ID = "OBSProject.OBSStudio"
 OBS_EXE_NAMES = ("obs64.exe", "obs32.exe")
 _SKIP_PATH_PARTS = ("streamlabs", "windowsapps", "$recycle.bin", "system volume information")
@@ -137,20 +138,31 @@ def _from_cache() -> Path | None:
     return found
 
 
+def _cheap_locations() -> list[Path]:
+    """Standard install paths only — safe to check on a timer."""
+    env = os.environ
+    program_files = Path(env.get("ProgramFiles", r"C:\Program Files"))
+    program_files_x86 = Path(env.get("ProgramFiles(x86)", r"C:\Program Files (x86)"))
+    local = Path(env.get("LOCALAPPDATA") or "")
+    return [
+        program_files / "obs-studio" / "bin" / "64bit" / "obs64.exe",
+        program_files / "obs-studio" / "bin" / "32bit" / "obs32.exe",
+        program_files_x86 / "obs-studio" / "bin" / "64bit" / "obs64.exe",
+        program_files_x86 / "obs-studio" / "bin" / "32bit" / "obs32.exe",
+        local / "Programs" / "obs-studio" / "bin" / "64bit" / "obs64.exe",
+    ]
+
+
 def _usual_locations() -> list[Path]:
     env = os.environ
     program_files = Path(env.get("ProgramFiles", r"C:\Program Files"))
     program_files_x86 = Path(env.get("ProgramFiles(x86)", r"C:\Program Files (x86)"))
-    local = Path(env.get("LOCALAPPDATA", ""))
+    local = Path(env.get("LOCALAPPDATA") or "")
     home = Path.home()
     roots = [
         program_files,
         program_files_x86,
         local / "Programs",
-        home,
-        home / "Documents",
-        home / "Desktop",
-        home / "Downloads",
         app_dir(),
         app_dir().parent,
         Path(env.get("ProgramData", r"C:\ProgramData")) / "chocolatey" / "lib" / "obs-studio",
@@ -160,7 +172,7 @@ def _usual_locations() -> list[Path]:
         program_files / "Steam" / "steamapps" / "common",
     ]
     names = ("obs-studio", "OBS", "OBS Studio", "obs")
-    candidates: list[Path] = []
+    candidates: list[Path] = list(_cheap_locations())
     for root in roots:
         for name in names:
             folder = root / name
@@ -363,22 +375,22 @@ def _from_drive_scan() -> Path | None:
     return None
 
 
-def find_obs_exe() -> Path | None:
-    """Find obs64.exe in standard folders, registry, shortcuts, or other drives."""
+def find_obs_exe(*, deep: bool = False) -> Path | None:
+    """Find obs64.exe. Deep scan (shortcuts / other drives) is for background use only."""
     global _found_obs
     if _found_obs is not None:
         if _looks_like_obs(_found_obs):
             return _found_obs
         _forget_cached_path()
 
-    for getter in (
+    getters = [
         _from_cache,
         lambda: _first_existing(_usual_locations()),
         _from_registry,
-        _from_running_process,
-        _from_shortcuts,
-        _from_drive_scan,
-    ):
+    ]
+    if deep:
+        getters.extend((_from_running_process, _from_shortcuts, _from_drive_scan))
+    for getter in getters:
         found = getter()
         if found:
             return _remember(found)
@@ -387,11 +399,11 @@ def find_obs_exe() -> Path | None:
 
 
 def obs_is_installed() -> bool:
-    return find_obs_exe() is not None
+    return find_obs_exe(deep=False) is not None
 
 
 def obs_exe_present() -> bool:
-    """Cheap check for the poller. Does not scan other drives."""
+    """Cheap check for the poller. Cache + Program Files only."""
     global _found_obs
     if _found_obs is not None:
         if _looks_like_obs(_found_obs):
@@ -399,7 +411,7 @@ def obs_exe_present() -> bool:
         _forget_cached_path()
     if _from_cache() is not None:
         return True
-    found = _first_existing(_usual_locations())
+    found = _first_existing(_cheap_locations())
     if found:
         _remember(found)
         return True
@@ -610,7 +622,7 @@ def _wait_for_obs(status: StatusFn, seconds: int = 180) -> Path | None:
         status(f"Waiting for OBS to finish installing… {left}s")
         time.sleep(2)
     _forget_cached_path()
-    return find_obs_exe()
+    return find_obs_exe(deep=True)
 
 
 def _run_official_installer(installer: Path, status: StatusFn) -> Path | None:
@@ -748,7 +760,7 @@ def install_obs(status: StatusFn | None = None, *, force: bool = False) -> Path:
     """Install official OBS Studio if needed. Returns the obs64.exe path."""
     status = status or _noop
     if not force:
-        existing = find_obs_exe()
+        existing = find_obs_exe(deep=True)
         if existing:
             return existing
     _forget_cached_path()

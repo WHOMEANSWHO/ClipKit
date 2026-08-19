@@ -12,9 +12,11 @@ from pathlib import Path
 
 from .install_obs import find_obs_exe
 from .keys import DEFAULT_BINDS, Hotkey, UserBinds
+from .audio import list_capture_devices, pick_microphone
 from .notifications import register_toast_app
 from .paths import scripts_dir as repo_scripts_dir
 from .presets import Preset
+from .settings import load_last_game
 from .startup import install_obs_windows_startup, remove_obs_windows_startup
 
 PROFILE_NAME = "ClipKit"
@@ -48,6 +50,26 @@ def _new_uuid() -> str:
 def _write_ini(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text.replace("\n", "\r\n"), encoding="utf-8")
+
+
+def _write_profile(path: Path, text: str) -> None:
+    """Update the existing ClipKit profile in place instead of replacing it."""
+    incoming = _ini_parser()
+    incoming.read_string(text.replace("\r\n", "\n"))
+    parser = _ini_parser()
+    if path.is_file():
+        _read_ini(parser, path)
+    for section in incoming.sections():
+        if not parser.has_section(section):
+            parser.add_section(section)
+        for key, value in incoming.items(section):
+            parser.set(section, key, value)
+    if not parser.has_section("General"):
+        parser.add_section("General")
+    parser.set("General", "Name", PROFILE_NAME)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="\r\n") as handle:
+        parser.write(handle, space_around_delimiters=False)
 
 
 def _ini_parser() -> ConfigParser:
@@ -240,26 +262,81 @@ ReplayBuffer={save_ini}
 """
 
 
-def _capture_source(kind: str, source_uuid: str, binds: UserBinds) -> dict:
-    # Game only. "hotkey" hooks whichever game is in front when they press the key,
-    # so switching FiveM / Fortnite / etc. does not mean opening OBS properties.
+def _window_spec(last_game: dict) -> str:
+    title = str(last_game.get("title") or "").replace(":", " ")
+    klass = str(last_game.get("class") or "").replace(":", " ")
+    exe = str(last_game.get("exe") or "").replace(":", " ")
+    return f"{title}:{klass}:{exe}"
+
+
+def _load_json(path: Path) -> dict | None:
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _named_source(existing: dict | None, name: str) -> dict | None:
+    if not existing:
+        return None
+    for source in existing.get("sources") or []:
+        if isinstance(source, dict) and source.get("name") == name:
+            return source
+    return None
+
+
+def _keep_uuid(existing: dict | None) -> str:
+    value = str((existing or {}).get("uuid") or "").strip()
+    return value or _new_uuid()
+
+
+def _keep_prev_ver(existing: dict | None) -> int:
+    try:
+        return int((existing or {}).get("prev_ver") or 537001985)
+    except (TypeError, ValueError):
+        return 537001985
+
+
+def _capture_source(
+    kind: str,
+    source_uuid: str,
+    binds: UserBinds,
+    existing: dict | None = None,
+) -> dict:
+    # "any" grabs whichever fullscreen game is in front.
+    # "This game" keeps a switch hotkey and reopens the last hooked game.
+    # Any FiveM shortcut / build counts as the same game.
+    last_game = load_last_game() if kind != "any" else {}
+    start_binds = [binds.hook_game.binding()] if kind != "any" else []
+    existing_settings = existing.get("settings") if isinstance(existing, dict) else None
+    if not isinstance(existing_settings, dict):
+        existing_settings = {}
+    settings: dict = {
+        "capture_audio": True,
+        "priority": 2,
+    }
     if kind == "any":
-        capture_mode = "any"
-        start_binds: list[dict] = []
+        settings["capture_mode"] = "any"
+    elif last_game.get("exe"):
+        settings["capture_mode"] = "window"
+        settings["window"] = _window_spec(last_game)
+    elif existing_settings.get("window"):
+        settings["capture_mode"] = str(existing_settings.get("capture_mode") or "window")
+        settings["window"] = existing_settings["window"]
+        if existing_settings.get("priority") is not None:
+            settings["priority"] = existing_settings["priority"]
     else:
-        capture_mode = "hotkey"
-        start_binds = [binds.hook_game.binding()]
+        settings["capture_mode"] = "hotkey"
     return {
-        "prev_ver": 537001985,
+        "prev_ver": _keep_prev_ver(existing),
         "name": "Game Capture",
         "uuid": source_uuid,
         "id": "game_capture",
         "versioned_id": "game_capture",
-        "settings": {
-            "capture_mode": capture_mode,
-            "capture_audio": True,
-            "priority": 1,
-        },
+        "settings": settings,
         "mixers": TRACK_GAME,
         "sync": 0,
         "flags": 0,
@@ -294,10 +371,17 @@ def _scene_collection(
     *,
     show_notifications: bool = True,
     show_popup: bool = True,
+    existing: dict | None = None,
 ) -> dict:
-    game_uuid = _new_uuid()
-    scene_uuid = _new_uuid()
-    mic_uuid = _new_uuid()
+    existing = existing if isinstance(existing, dict) else {}
+    existing_mic = existing.get("AuxAudioDevice1") if isinstance(existing.get("AuxAudioDevice1"), dict) else {}
+    existing_game = _named_source(existing, "Game Capture")
+    existing_scene = _named_source(existing, "Game")
+    game_uuid = _keep_uuid(existing_game)
+    scene_uuid = _keep_uuid(existing_scene)
+    mic_uuid = _keep_uuid(existing_mic)
+    existing_filters = existing_mic.get("filters") if isinstance(existing_mic.get("filters"), list) else []
+    filter_uuid = _keep_uuid(existing_filters[0] if existing_filters and isinstance(existing_filters[0], dict) else None)
     capture_name = "Game Capture"
     scripts = []
     for path in script_paths:
@@ -308,6 +392,13 @@ def _scene_collection(
                 "debug_enabled": False,
                 "show_notifications": show_notifications,
                 "show_popup": show_popup,
+            }
+        elif path.name == "clipkit_autostart.lua":
+            settings = {
+                "remember_game": capture != "any",
+                "switch_game": [binds.hook_game.binding()] if capture != "any" else [],
+                "ptt_enabled": binds.ptt_enabled,
+                "ptt_keys": ",".join(key.obs_key for key in binds.ptt_keys()) if binds.ptt_enabled else "",
             }
         else:
             settings = {}
@@ -325,10 +416,12 @@ def _scene_collection(
         filters: list[dict] | None = None,
         device_id: str = "default",
         enabled: bool = True,
+        prev_ver: int = 537001985,
+        volume: float = 1.0,
     ) -> dict:
         ptt_binds = [key.binding() for key in (ptt_hotkeys or [])] if push_to_talk else []
         data = {
-            "prev_ver": 537001985,
+            "prev_ver": prev_ver,
             "name": name,
             "uuid": source_uuid,
             "id": source_id,
@@ -337,7 +430,7 @@ def _scene_collection(
             "mixers": mixers,
             "sync": 0,
             "flags": 0,
-            "volume": 1.0,
+            "volume": volume,
             "balance": 0.5,
             "enabled": enabled,
             "muted": muted,
@@ -365,9 +458,9 @@ def _scene_collection(
     if mic_on:
         mic_filters.append(
             {
-                "prev_ver": 537001985,
+                "prev_ver": _keep_prev_ver(existing_filters[0] if existing_filters and isinstance(existing_filters[0], dict) else None),
                 "name": "Noise Suppression",
-                "uuid": _new_uuid(),
+                "uuid": filter_uuid,
                 "id": "noise_suppress_filter_v2",
                 "versioned_id": "noise_suppress_filter_v2",
                 "settings": {"method": "rnnoise"},
@@ -381,11 +474,14 @@ def _scene_collection(
             "Mic",
             mic_uuid,
             "wasapi_input_capture",
-            push_to_talk=binds.ptt_enabled,
-            ptt_hotkeys=binds.ptt_keys() if binds.ptt_enabled else None,
-            muted=not mic_on,
+            push_to_talk=False,
+            muted=not mic_on or binds.ptt_enabled,
             mixers=TRACK_MIC if mic_on else 0,
             filters=mic_filters,
+            device_id=binds.mic_device_id or "default",
+            enabled=mic_on,
+            prev_ver=_keep_prev_ver(existing_mic),
+            volume=float(existing_mic.get("volume") or 1.0),
         ),
         "current_scene": "Game",
         "current_program_scene": "Game",
@@ -420,9 +516,9 @@ def _scene_collection(
         "resolution": {"x": preset.canvas_width, "y": preset.canvas_height},
         "version": 2,
         "sources": [
-            _capture_source(capture, game_uuid, binds),
+            _capture_source(capture, game_uuid, binds, existing_game),
             {
-                "prev_ver": 537001985,
+                "prev_ver": _keep_prev_ver(existing_scene),
                 "name": "Game",
                 "uuid": scene_uuid,
                 "id": "scene",
@@ -482,7 +578,7 @@ def _scene_collection(
                 "deinterlace_mode": 0,
                 "deinterlace_field_order": 0,
                 "monitoring_type": 0,
-                "canvas_uuid": "6c69626f-6273-4c00-9d88-c5136d61696e",
+                "canvas_uuid": str((existing_scene or {}).get("canvas_uuid") or "6c69626f-6273-4c00-9d88-c5136d61696e"),
                 "private_settings": {},
             },
         ],
@@ -585,7 +681,7 @@ def _update_user_ini(config_dir: Path) -> None:
     parser.set("BasicWindow", "SysTrayMinimizeToTray", "false")
     parser.set("BasicWindow", "SysTrayWhenStarted", "false")
     parser.set("BasicWindow", "PreviewEnabled", "true")
-    parser.set("BasicWindow", "MixerShowInactive", "false")
+    parser.set("BasicWindow", "MixerShowInactive", "true")
     parser.set("BasicWindow", "MixerShowHidden", "false")
     with user_ini.open("w", encoding="utf-8", newline="\r\n") as handle:
         parser.write(handle, space_around_delimiters=False)
@@ -601,7 +697,7 @@ def _update_user_ini(config_dir: Path) -> None:
         ("BasicWindow", "SysTrayWhenStarted", "false"),
         ("BasicWindow", "SysTrayMinimizeToTray", "false"),
         ("BasicWindow", "PreviewEnabled", "true"),
-        ("BasicWindow", "MixerShowInactive", "false"),
+        ("BasicWindow", "MixerShowInactive", "true"),
         ("BasicWindow", "MixerShowHidden", "false"),
     ):
         text = _upsert_ini_key(text, section, key, value)
@@ -624,6 +720,15 @@ def apply_setup(
     start_with_windows: bool = False,
 ) -> dict:
     binds = binds or DEFAULT_BINDS
+    if binds.mic_mode != "off":
+        preferred = binds.mic_device_id
+        if not preferred or preferred.lower() == "default":
+            chosen = pick_microphone(list_capture_devices())
+        else:
+            chosen = pick_microphone(list_capture_devices(), preferred)
+        if chosen is not None:
+            binds.mic_device_id = chosen.device_id
+            binds.mic_device_name = chosen.name
     if start_with_windows:
         install_autostart = True
     config_dir = Path(config_dir) if config_dir else obs_config_dir()
@@ -656,7 +761,7 @@ def apply_setup(
 
     profile_dir = config_dir / "basic" / "profiles" / PROFILE_NAME
     profile_dir.mkdir(parents=True, exist_ok=True)
-    _write_ini(
+    _write_profile(
         profile_dir / "basic.ini",
         _profile_ini(
             preset,
@@ -675,6 +780,7 @@ def apply_setup(
     scenes_dir = config_dir / "basic" / "scenes"
     scenes_dir.mkdir(parents=True, exist_ok=True)
     scene_path = scenes_dir / f"{SCENE_NAME}.json"
+    existing_scene = _load_json(scene_path)
     scene_path.write_text(
         json.dumps(
             _scene_collection(
@@ -684,6 +790,7 @@ def apply_setup(
                 capture,
                 show_notifications=show_notifications,
                 show_popup=show_popup,
+                existing=existing_scene,
             ),
             indent=4,
         ),
@@ -705,6 +812,11 @@ def apply_setup(
     if binds.ptt_enabled:
         labels = ", ".join(key.label for key in binds.ptt_keys())
         mic_label = f"push to talk ({labels})"
+    mic_device = binds.mic_device_name or binds.mic_device_id or "Windows default"
+    if binds.mic_mode == "off":
+        mic_summary = "off"
+    else:
+        mic_summary = f"{mic_device} · {mic_label}"
 
     return {
         "profile": PROFILE_NAME,
@@ -717,9 +829,9 @@ def apply_setup(
         "record_toggle": binds.record_toggle.label if enable_recording else "off",
         "start_hotkey": binds.replay_toggle.label,
         "ptt": mic_label,
-        "mic": mic_label,
+        "mic": mic_summary,
         "capture": (
-            f"This game (press {binds.hook_game.label} to switch)"
+            f"This game (remembers last title, {binds.hook_game.label} to switch)"
             if capture != "any"
             else "Any fullscreen game"
         ),

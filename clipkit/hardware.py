@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import ctypes
 import json
 import shutil
 import subprocess
+from ctypes import wintypes
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .install_obs import find_obs_exe
+from .audio import CaptureDevice, list_capture_devices
+from .install_obs import obs_exe_present
 
 
 @dataclass
@@ -26,10 +29,124 @@ class Hardware:
     obs_exe: Path | None = None
     obs_config_dir: Path | None = None
     notes: list[str] = field(default_factory=list)
+    mics: list[CaptureDevice] = field(default_factory=list)
 
     @property
     def display_label(self) -> str:
         return f"{self.display_width}x{self.display_height}"
+
+
+def _hardware_cache_path() -> Path:
+    return Path.home() / "AppData" / "Roaming" / "ClipKit" / "hardware.json"
+
+
+def load_cached_hardware() -> Hardware | None:
+    path = _hardware_cache_path()
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict) or not data.get("gpu_name"):
+        return None
+    hw = Hardware()
+    hw.cpu_name = str(data.get("cpu_name") or hw.cpu_name)
+    hw.ram_gb = float(data.get("ram_gb") or 0)
+    hw.gpu_name = str(data.get("gpu_name") or hw.gpu_name)
+    hw.gpu_vendor = str(data.get("gpu_vendor") or hw.gpu_vendor)
+    hw.vram_gb = float(data.get("vram_gb") or 0)
+    hw.display_width = int(data.get("display_width") or 1920)
+    hw.display_height = int(data.get("display_height") or 1080)
+    hw.obs_running = obs_is_running()
+    hw.obs_installed = obs_exe_present()
+    return hw
+
+
+def save_cached_hardware(hw: Hardware) -> None:
+    path = _hardware_cache_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "cpu_name": hw.cpu_name,
+                    "ram_gb": hw.ram_gb,
+                    "gpu_name": hw.gpu_name,
+                    "gpu_vendor": hw.gpu_vendor,
+                    "vram_gb": hw.vram_gb,
+                    "display_width": hw.display_width,
+                    "display_height": hw.display_height,
+                }
+            ),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
+class _PROCESSENTRY32W(ctypes.Structure):
+    _fields_ = [
+        ("dwSize", wintypes.DWORD),
+        ("cntUsage", wintypes.DWORD),
+        ("th32ProcessID", wintypes.DWORD),
+        ("th32DefaultHeapID", ctypes.c_size_t),
+        ("th32ModuleID", wintypes.DWORD),
+        ("cntThreads", wintypes.DWORD),
+        ("th32ParentProcessID", wintypes.DWORD),
+        ("pcPriClassBase", ctypes.c_long),
+        ("dwFlags", wintypes.DWORD),
+        ("szExeFile", wintypes.WCHAR * 260),
+    ]
+
+
+_kernel32 = ctypes.windll.kernel32
+_kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+_kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+_kernel32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(_PROCESSENTRY32W)]
+_kernel32.Process32FirstW.restype = wintypes.BOOL
+_kernel32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(_PROCESSENTRY32W)]
+_kernel32.Process32NextW.restype = wintypes.BOOL
+_kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+_kernel32.CloseHandle.restype = wintypes.BOOL
+_TH32CS_SNAPPROCESS = 0x00000002
+_INVALID_HANDLE = ctypes.c_void_p(-1).value
+
+
+def obs_is_running() -> bool:
+    """True if OBS is running. Uses a process snapshot, not tasklist."""
+    wanted = {"obs64.exe", "obs32.exe", "obs.exe"}
+    snap = _kernel32.CreateToolhelp32Snapshot(_TH32CS_SNAPPROCESS, 0)
+    if not snap or int(snap) == _INVALID_HANDLE:
+        return _obs_running_tasklist()
+    try:
+        entry = _PROCESSENTRY32W()
+        entry.dwSize = ctypes.sizeof(entry)
+        if not _kernel32.Process32FirstW(snap, ctypes.byref(entry)):
+            return False
+        while True:
+            if entry.szExeFile.lower() in wanted:
+                return True
+            if not _kernel32.Process32NextW(snap, ctypes.byref(entry)):
+                return False
+    finally:
+        _kernel32.CloseHandle(snap)
+
+
+def _obs_running_tasklist() -> bool:
+    hidden = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+    try:
+        result = subprocess.run(
+            ["tasklist", "/FO", "CSV", "/NH"],
+            capture_output=True,
+            text=True,
+            timeout=4,
+            creationflags=hidden,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    out = (result.stdout or "").lower()
+    return "obs64.exe" in out or "obs32.exe" in out
 
 
 def _powershell(script: str) -> str:
@@ -37,6 +154,8 @@ def _powershell(script: str) -> str:
         [
             "powershell",
             "-NoProfile",
+            "-WindowStyle",
+            "Hidden",
             "-ExecutionPolicy",
             "Bypass",
             "-Command",
@@ -44,7 +163,8 @@ def _powershell(script: str) -> str:
         ],
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=20,
+        cwd=str(Path.home()),
         creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
     )
     if completed.returncode != 0:
@@ -65,7 +185,7 @@ def _nvidia_smi() -> tuple[str, float] | None:
             ],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=8,
             creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
         )
         if out.returncode != 0 or not out.stdout.strip():
@@ -111,10 +231,8 @@ $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1 -ExpandProperty 
 $ram = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 1)
 $gpus = @(Get-CimInstance Win32_VideoController | Where-Object {
     $_.Name -and $_.Name -notmatch 'Oray|Remote|Basic Display|Microsoft Basic'
-} | Select-Object Name, AdapterRAM, PNPDeviceID)
+} | Select-Object Name, AdapterRAM)
 $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-$obsProc = @(Get-Process -Name obs64,obs32,obs -ErrorAction SilentlyContinue)
-$config = Join-Path $env:APPDATA 'obs-studio'
 [pscustomobject]@{
     cpu = $cpu.Trim()
     ram_gb = $ram
@@ -122,31 +240,30 @@ $config = Join-Path $env:APPDATA 'obs-studio'
         [pscustomobject]@{
             name = $_.Name
             adapter_ram = [int64]($_.AdapterRAM)
-            pnp = $_.PNPDeviceID
         }
     })
     width = [int]$screen.Width
     height = [int]$screen.Height
-    obs_running = ($obsProc.Count -gt 0)
-    obs_config = $config
 } | ConvertTo-Json -Compress -Depth 4
 """
     try:
         payload: dict[str, Any] = json.loads(_powershell(script))
     except (RuntimeError, json.JSONDecodeError, subprocess.TimeoutExpired) as exc:
         hw.notes.append(f"Could not fully detect hardware: {exc}")
+        hw.obs_running = obs_is_running()
+        hw.obs_installed = obs_exe_present()
+        try:
+            hw.mics = list_capture_devices()
+        except Exception:
+            hw.mics = []
         return hw
 
     hw.cpu_name = str(payload.get("cpu") or hw.cpu_name)
     hw.ram_gb = float(payload.get("ram_gb") or 0)
     hw.display_width = int(payload.get("width") or 1920)
     hw.display_height = int(payload.get("height") or 1080)
-    hw.obs_running = bool(payload.get("obs_running"))
-    hw.obs_exe = find_obs_exe()
-    hw.obs_installed = hw.obs_exe is not None
-    config = payload.get("obs_config")
-    if config:
-        hw.obs_config_dir = Path(config)
+    hw.obs_running = obs_is_running()
+    hw.obs_installed = obs_exe_present()
 
     gpus = payload.get("gpus") or []
     if isinstance(gpus, dict):
@@ -190,23 +307,10 @@ $config = Join-Path $env:APPDATA 'obs-studio'
     if hw.ram_gb and hw.ram_gb < 12:
         hw.notes.append("Low system RAM. The Low preset is safer.")
 
+    try:
+        hw.mics = list_capture_devices()
+    except Exception:
+        hw.mics = []
+
+    save_cached_hardware(hw)
     return hw
-
-
-def obs_is_running() -> bool:
-    hidden = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
-    for name in ("obs64.exe", "obs32.exe", "obs.exe"):
-        try:
-            result = subprocess.run(
-                ["tasklist", "/FI", f"IMAGENAME eq {name}", "/NH"],
-                capture_output=True,
-                text=True,
-                timeout=4,
-                creationflags=hidden,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            continue
-        out = (result.stdout or "").lower()
-        if name in out and "no tasks" not in out:
-            return True
-    return False

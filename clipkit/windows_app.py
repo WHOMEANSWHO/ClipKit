@@ -189,12 +189,29 @@ def _copy_into_install(src: Path, dest: Path) -> bool:
         return dest.is_file()
 
 
+def _already_registered(exe: Path) -> bool:
+    start = start_menu_dir() / START_FOLDER / "ClipKit.lnk"
+    if not start.is_file() or not exe.is_file():
+        return False
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, UNINSTALL_KEY)
+        try:
+            version, _typ = winreg.QueryValueEx(key, "DisplayVersion")
+        finally:
+            winreg.CloseKey(key)
+    except OSError:
+        return False
+    return str(version) == __version__
+
+
 def ensure_windows_app() -> bool:
     """Install or update the Windows app. False means this process should exit."""
     if not is_frozen() or os.environ.get("CLIPKIT_PORTABLE"):
         return True
     src = Path(sys.executable).resolve()
     dest = installed_exe()
+    if _same_file(src, dest) and _already_registered(dest):
+        return True
     if not _copy_into_install(src, dest):
         return True
     _register_uninstall(dest)
@@ -207,9 +224,17 @@ def ensure_windows_app() -> bool:
     if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
         flags |= subprocess.CREATE_NEW_PROCESS_GROUP
     try:
-        subprocess.Popen([str(dest)], cwd=str(dest.parent), creationflags=flags)
+        subprocess.Popen(
+            [str(dest)],
+            cwd=str(dest.parent),
+            creationflags=flags,
+            close_fds=True,
+        )
     except OSError:
         return True
+    from .paths import leave_extract_dir
+
+    leave_extract_dir()
     return False
 
 
