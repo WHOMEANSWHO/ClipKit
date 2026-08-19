@@ -25,10 +25,15 @@ Quality is **Low / Medium / High** from the PC’s GPU and display. Bitrate defa
 - Internet the first time, if OBS is not installed yet
 - A folder for clips
 
+## Download
+
+- **Finished app:** [release/ClipKit.exe](https://github.com/WHOMEANSWHO/ClipKit/raw/master/release/ClipKit.exe) — one file, no Python. Also on [Releases](https://github.com/WHOMEANSWHO/ClipKit/releases).
+- **Unbuilt source:** the rest of this repo (`clipkit/`, `scripts/`, `build.py`).
+
 ## How to use it
 
-1. Download **ClipKit.exe** from [Releases](https://github.com/WHOMEANSWHO/ClipKit/releases) if one exists, or build it (below).
-2. Double-click **ClipKit.exe**.
+1. Download **ClipKit.exe**.
+2. Double-click it.
 3. Pick a clips folder, clip length, bitrate, and keys if you want to change them.
 4. Close OBS if it is already open (check the tray too).
 5. Click **Install OBS and set up**, or **Apply to OBS** if OBS is already installed.
@@ -67,7 +72,7 @@ python clipkit.py --detect
 python build.py
 ```
 
-`build.py` writes a single file: `dist\ClipKit.exe`. That is what you send to people.
+`build.py` writes `dist\ClipKit.exe` and copies it to `release\ClipKit.exe` (the file on GitHub).
 
 `--detect` prints GPU, RAM, and the recommended preset without changing OBS.
 

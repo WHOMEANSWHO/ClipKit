@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -15,8 +16,15 @@ def main() -> int:
     print(" ".join(cmd))
     subprocess.check_call(cmd, cwd=ROOT)
     exe = ROOT / "dist" / "ClipKit.exe"
+    if not exe.is_file():
+        raise SystemExit("Build finished, but dist\\ClipKit.exe was not found.")
+    release_dir = ROOT / "release"
+    release_dir.mkdir(parents=True, exist_ok=True)
+    shipped = release_dir / "ClipKit.exe"
+    shutil.copy2(exe, shipped)
     print(f"Built {exe}")
-    print("Send that one file. They double-click ClipKit.exe.")
+    print(f"Copied {shipped}")
+    print("That is the finished app. They double-click ClipKit.exe.")
     return 0
 
 
