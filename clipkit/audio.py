@@ -79,6 +79,13 @@ def _score(name: str) -> int:
     return score
 
 
+def usable_microphones(devices: list[CaptureDevice]) -> list[CaptureDevice]:
+    ranked = [device for device in devices if _score(device.name) > 0]
+    if not ranked:
+        ranked = list(devices)
+    return sorted(ranked, key=lambda item: _score(item.name), reverse=True)
+
+
 def pick_microphone(
     devices: list[CaptureDevice],
     preferred_id: str = "",

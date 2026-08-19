@@ -9,6 +9,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from . import __version__
+from .audio import pick_microphone, usable_microphones
 from .hardware import Hardware, detect, load_cached_hardware, obs_is_running
 from .health import probe, reveal_in_explorer
 from .install_obs import (
@@ -28,6 +29,7 @@ from .presets import (
     CLIP_LENGTHS,
     DEFAULT_BITRATE,
     FPS_CHOICES,
+    MIC_CHOICES,
     PRESET_ORDER,
     RECORD_BITRATES,
     Preset,
@@ -140,8 +142,8 @@ class ClipKitApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title(f"ClipKit {__version__}")
-        self.geometry("1120x860")
-        self.minsize(960, 740)
+        self.geometry("1120x900")
+        self.minsize(960, 780)
         self.configure(bg=BG)
         self._set_app_icon()
         self._hw: Hardware | None = None
@@ -153,6 +155,9 @@ class ClipKitApp(tk.Tk):
         self._bitrate = tk.IntVar(value=DEFAULT_BITRATE)
         self._just_installed = False
         self._capture = tk.StringVar(value="window")
+        self._mic_mode = tk.StringVar(value=DEFAULT_BINDS.mic_mode)
+        self._mic_choice = tk.StringVar(value="")
+        self._mic_by_label: dict = {}
         self._start_with_windows = tk.BooleanVar(value=True)
         self._enable_recording = tk.BooleanVar(value=True)
         self._status = tk.StringVar(value="Detecting your PC…")
@@ -207,6 +212,26 @@ class ClipKitApp(tk.Tk):
         style.configure("TScrollbar", background=RAISED, troughcolor=BG, bordercolor=BG, arrowcolor=MUTED)
         style.configure("Dark.TEntry", fieldbackground=SURFACE, foreground=TEXT, insertcolor=TEXT, bordercolor=BORDER)
         style.map("Dark.TEntry", fieldbackground=[("focus", SURFACE)], bordercolor=[("focus", PRIMARY)])
+        style.configure(
+            "Dark.TCombobox",
+            fieldbackground=SURFACE,
+            background=SURFACE,
+            foreground=TEXT,
+            arrowcolor=MUTED,
+            bordercolor=BORDER,
+            lightcolor=SURFACE,
+            darkcolor=SURFACE,
+        )
+        style.map(
+            "Dark.TCombobox",
+            fieldbackground=[("readonly", SURFACE), ("disabled", RAISED)],
+            foreground=[("readonly", TEXT), ("disabled", MUTED)],
+            arrowcolor=[("readonly", MUTED), ("disabled", MUTED)],
+        )
+        self.option_add("*TCombobox*Listbox.background", SURFACE)
+        self.option_add("*TCombobox*Listbox.foreground", TEXT)
+        self.option_add("*TCombobox*Listbox.selectBackground", PRIMARY_BTN)
+        self.option_add("*TCombobox*Listbox.selectForeground", PRIMARY)
         style.configure(
             "Ghost.TButton",
             font=(UI, 10),
@@ -514,9 +539,28 @@ class ClipKitApp(tk.Tk):
             wraplength=520,
             justify="left",
         ).pack(anchor="w", padx=20, pady=(0, 8))
+        self._chips(
+            choices,
+            "Microphone",
+            self._mic_mode,
+            MIC_CHOICES,
+            self._sync_mic_controls,
+        )
+        mic_wrap = tk.Frame(choices, bg=PANEL)
+        mic_wrap.pack(fill="x", padx=20, pady=(0, 8))
+        tk.Label(
+            mic_wrap, text="DEVICE", bg=PANEL, fg=MUTED, font=(UI, 8, "bold")
+        ).pack(anchor="w")
+        self._mic_combo = ttk.Combobox(
+            mic_wrap,
+            textvariable=self._mic_choice,
+            state="readonly",
+            style="Dark.TCombobox",
+        )
+        self._mic_combo.pack(fill="x", pady=(8, 0), ipady=4)
         tk.Label(
             choices,
-            text="Game audio on track 1, mic on track 2. ClipKit picks your microphone. Mute and push-to-talk stay in Windows / Discord.",
+            text="Game audio on track 1, mic on track 2. ClipKit writes this mic into Settings → Audio. Desktop audio is disabled.",
             bg=PANEL,
             fg=MUTED,
             font=(MONO, 8),
@@ -524,7 +568,7 @@ class ClipKitApp(tk.Tk):
             justify="left",
         ).pack(anchor="w", padx=20, pady=(0, 16))
 
-        save = self._card(left, "Clips folder", "OBS saves here, then the sorter puts FiveM clips in a server folder.")
+        save = self._card(left, "Clips folder", "OBS saves here. ClipKit adds the sorter and a Clip saved popup.")
         path_row = tk.Frame(save, bg=PANEL)
         path_row.pack(fill="x", padx=20, pady=(4, 16))
         self._path_entry = ttk.Entry(path_row, textvariable=self._output, style="Dark.TEntry")
@@ -539,6 +583,11 @@ class ClipKitApp(tk.Tk):
         self.replay_bind = self._bind_row(binds, "Clipping on / off", DEFAULT_BINDS.replay_toggle)
         self.record_bind = self._bind_row(binds, "Recording on / off", DEFAULT_BINDS.record_toggle)
         self._record_row = self.record_bind.master
+        self._ptt_block = tk.Frame(binds, bg=PANEL)
+        self._ptt_block.pack(fill="x")
+        ptt_defaults = DEFAULT_BINDS.ptt_keys()
+        self.ptt1_bind = self._bind_row(self._ptt_block, "Talk 1", ptt_defaults[0])
+        self.ptt2_bind = self._bind_row(self._ptt_block, "Talk 2", ptt_defaults[1])
 
         options = self._card(right, "Extras", "Leave these on unless you know you want them off.")
         self._check(options, "Start OBS with Windows", self._start_with_windows)
@@ -583,6 +632,7 @@ class ClipKitApp(tk.Tk):
         self.fresh_btn.pack(anchor="w", padx=20, pady=(0, 16))
 
         self._sync_record_bind()
+        self._sync_mic_controls()
 
     def _make_pill(self, parent: tk.Misc, title: str, value: str, *, accent: bool = False) -> tk.Label:
         bg = "#0d2a22" if accent else SURFACE
@@ -597,19 +647,86 @@ class ClipKitApp(tk.Tk):
         value_lbl.pack(anchor="w", padx=12, pady=(2, 8))
         return value_lbl
 
-    def _current_binds(self) -> UserBinds:
+    def _selected_mic(self) -> tuple[str, str]:
+        device = self._mic_by_label.get(self._mic_choice.get().strip())
+        if device is not None:
+            return device.device_id, device.short_name
         saved = binds_from_settings(self._saved)
+        return saved.mic_device_id, saved.mic_device_name
+
+    def _current_binds(self) -> UserBinds:
+        mic_id, mic_name = self._selected_mic()
+        mode = self._mic_mode.get()
+        if mode not in {"open", "ptt", "off"}:
+            mode = DEFAULT_BINDS.mic_mode
+        ptt = [self.ptt1_bind.hotkey, self.ptt2_bind.hotkey] if getattr(self, "ptt1_bind", None) else None
         return UserBinds(
             save=self.save_bind.hotkey,
             replay_toggle=self.replay_bind.hotkey,
             record_toggle=self.record_bind.hotkey,
-            mic_device_id=saved.mic_device_id,
-            mic_device_name=saved.mic_device_name,
+            mic_mode=mode,
+            mic_device_id=mic_id,
+            mic_device_name=mic_name,
+            ptt=ptt,
         )
 
     def _sync_record_bind(self) -> None:
         state = "normal" if self._enable_recording.get() else "disabled"
         self.record_bind.configure(state=state)
+
+    def _sync_mic_controls(self) -> None:
+        mode = self._mic_mode.get()
+        ptt = mode == "ptt"
+        mic_on = mode != "off"
+        block = getattr(self, "_ptt_block", None)
+        if block is not None:
+            if ptt:
+                if not block.winfo_manager():
+                    block.pack(fill="x")
+            else:
+                block.pack_forget()
+        combo = getattr(self, "_mic_combo", None)
+        if combo is not None:
+            combo.configure(state="readonly" if mic_on else "disabled")
+        for store, variable in self._chip_groups:
+            if variable is self._mic_mode:
+                self._refresh_chips(store, variable)
+
+    def _fill_mics(self, hw: Hardware) -> None:
+        devices = usable_microphones(hw.mics)
+        self._mic_by_label = {}
+        labels: list[str] = []
+        counts: dict[str, int] = {}
+        for device in devices:
+            counts[device.short_name] = counts.get(device.short_name, 0) + 1
+        used: dict[str, int] = {}
+        for device in devices:
+            base = device.short_name
+            if counts[base] > 1:
+                used[base] = used.get(base, 0) + 1
+                label = f"{base} ({used[base]})" if used[base] > 1 else base
+            else:
+                label = base
+            self._mic_by_label[label] = device
+            labels.append(label)
+        if not labels:
+            labels = ["Windows default"]
+        if getattr(self, "_mic_combo", None):
+            self._mic_combo["values"] = labels
+        current = self._mic_choice.get().strip()
+        if current in self._mic_by_label:
+            chosen = current
+        else:
+            saved_id = str((self._saved or {}).get("mic_device_id") or "")
+            picked = pick_microphone(devices, saved_id)
+            chosen = labels[0]
+            if picked is not None:
+                for label, device in self._mic_by_label.items():
+                    if device.device_id == picked.device_id:
+                        chosen = label
+                        break
+        self._mic_choice.set(chosen)
+        self._sync_mic_controls()
 
     def _on_choices_changed(self) -> None:
         if not self._hw:
@@ -685,6 +802,7 @@ class ClipKitApp(tk.Tk):
         if hw.obs_running:
             notes.insert(0, "Apply restarts OBS. You can keep FiveM open.")
         self.notes_label.configure(text="\n".join(notes))
+        self._fill_mics(hw)
         self._sync_preset_copy()
         self._sync_obs_presence(hw.obs_installed, update_status=status_ready)
 
@@ -927,6 +1045,10 @@ class ClipKitApp(tk.Tk):
         self.save_bind.set_hotkey(binds.save)
         self.replay_bind.set_hotkey(binds.replay_toggle)
         self.record_bind.set_hotkey(binds.record_toggle)
+        self.ptt1_bind.set_hotkey(binds.ptt_keys()[0])
+        self.ptt2_bind.set_hotkey(binds.ptt_keys()[1])
+        if binds.mic_mode in {"open", "ptt", "off"}:
+            self._mic_mode.set(binds.mic_mode)
         extras = (
             ("start_with_windows", self._start_with_windows),
             ("enable_recording", self._enable_recording),
@@ -936,6 +1058,7 @@ class ClipKitApp(tk.Tk):
                 variable.set(bool(data[key]))
         self._on_choices_changed()
         self._sync_record_bind()
+        self._sync_mic_controls()
         for store, variable in self._chip_groups:
             self._refresh_chips(store, variable)
 
@@ -1027,8 +1150,11 @@ class ClipKitApp(tk.Tk):
                     f"Start/stop clipping: {result.get('clip_toggle', '')}",
                     f"Start/stop recording: {result.get('record_toggle', '')}",
                     f"Mic: {result.get('mic', '')}",
+                    f"Push to talk: {result.get('ptt', 'off')}",
                     f"Audio: {result.get('audio', 'game + mic')}",
                     startup_line,
+                    "Clip sorter: on",
+                    "Clip saved popup: on",
                     "",
                     "In OBS, click Game Capture and choose your game window. Run OBS as administrator if the preview stays black or game audio is missing.",
                     "",

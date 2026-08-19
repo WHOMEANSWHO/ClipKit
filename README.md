@@ -9,9 +9,10 @@ People in a Discord community can run **one file**, then delete it. They do not 
 - A separate OBS profile named **ClipKit** (your existing Untitled profile is left alone)
 - Replay buffer already running, so a hotkey saves the last 30 seconds, 1 minute, 2 minutes, or 5 minutes
 - Optional full recordings at the same quality
-- Game audio on track 1, mic on track 2. ClipKit picks your microphone. Set mute / push-to-talk in Windows or Discord.
+- Game audio on track 1, mic on track 2. ClipKit picks your microphone, turns on OBS push-to-talk, and sets Settings → Audio (desktop disabled, mic set to that device).
 - Desktop / Discord audio left out
 - Clips saved as normal OBS files, then sorted: FiveM goes to `your folder\Server name\Clip_Server_date_time.mp4`. Other games get `your folder\Game\Clip_Game_date_time.mp4`
+- A **Clip saved** popup (Medal-style) when you save a clip. ClipKit only installs that script; OBS runs it.
 - **Test clip** opens that folder so you can press Save in OBS and confirm a file appears
 - **Open** next to the clips path shows that folder
 - Health check confirms OBS is open on **ClipKit**, and names the Game Capture window if you already picked one
@@ -54,8 +55,9 @@ If OBS is missing, ClipKit installs official OBS, waits until it is running, clo
 | Save clip | Page Up |
 | Start / stop clipping | Num − |
 | Start / stop recording | Num + |
+| Push to talk | Mouse 4 / Mouse 5 |
 
-Any of these can be rebound in ClipKit. ClipKit picks your microphone for OBS.
+Any of these can be rebound in ClipKit. Microphone is Always on, Push to talk, or off. ClipKit writes the selected mic into OBS.
 
 ## Games
 
@@ -80,8 +82,8 @@ python build.py
 
 ## Notes
 
-- ClipKit is a setup tool only. After Apply you can delete `ClipKit.exe`. OBS keeps the ClipKit profile.
-- ClipKit picks your microphone for OBS. Mute and push-to-talk stay in Windows / Discord — ClipKit does not turn on OBS PTT.
+- ClipKit is a setup tool only. After Apply you can delete `ClipKit.exe`. OBS keeps the ClipKit profile, the clip sorter, and the Clip saved popup.
+- ClipKit picks a real microphone (not Chat Mix / virtual cables) and writes it into Settings → Audio as Mic/Auxiliary Audio. Desktop Audio is Disabled. Push to talk is OBS source PTT, default Mouse 4 and Mouse 5.
 - OBS must be fully closed while ClipKit applies settings.
 - ClipKit searches common install folders, the registry, shortcuts, and other drives for OBS before it installs a new copy.
 - A backup of `user.ini` is stored in `%APPDATA%\obs-studio\clipkit-backups\`.

@@ -12,7 +12,8 @@ from pathlib import Path
 
 from .audio import list_capture_devices, resolve_microphone
 from .install_obs import find_obs_exe
-from .keys import DEFAULT_BINDS, UserBinds
+from .keys import DEFAULT_BINDS, Hotkey, UserBinds
+from .notifications import install_toast_identity
 from .paths import scripts_dir
 from .presets import Preset
 from .startup import install_obs_windows_startup, remove_obs_windows_startup
@@ -357,15 +358,18 @@ def _stock_audio(
     device_id: str = "default",
     muted: bool = False,
     enabled: bool = True,
+    push_to_talk: bool = False,
+    ptt_hotkeys: list[Hotkey] | None = None,
     existing: dict | None = None,
 ) -> dict:
+    ptt_binds = [key.binding() for key in (ptt_hotkeys or [])] if push_to_talk else []
     return {
         "prev_ver": _keep_prev_ver(existing),
         "name": name,
         "uuid": source_uuid,
         "id": source_id,
         "versioned_id": source_id,
-        "settings": {"device_id": device_id},
+        "settings": {"device_id": device_id, "use_device_timing": False},
         "mixers": mixers,
         "sync": 0,
         "flags": 0,
@@ -375,13 +379,13 @@ def _stock_audio(
         "muted": muted,
         "push-to-mute": False,
         "push-to-mute-delay": 0,
-        "push-to-talk": False,
+        "push-to-talk": push_to_talk,
         "push-to-talk-delay": 0,
         "hotkeys": {
             "libobs.mute": [],
             "libobs.unmute": [],
             "libobs.push-to-mute": [],
-            "libobs.push-to-talk": [],
+            "libobs.push-to-talk": ptt_binds,
         },
         "deinterlace_mode": 0,
         "deinterlace_field_order": 0,
@@ -413,7 +417,6 @@ def _remove_helper_scripts(config_dir: Path) -> None:
     folder = config_dir / "clipkit-scripts"
     for name in (
         "clipkit_autostart.lua",
-        "clipkit_toast.ps1",
         "last-game.json",
         "ptt.json",
     ):
@@ -430,15 +433,25 @@ def _remove_helper_scripts(config_dir: Path) -> None:
             continue
 
 
-def _install_clip_sorter(config_dir: Path) -> Path:
+def _install_obs_scripts(config_dir: Path) -> list[Path]:
     dest_dir = config_dir / "clipkit-scripts"
     dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / "obs_game_clip_sorter.lua"
-    source = scripts_dir() / "obs_game_clip_sorter.lua"
-    if not source.is_file():
-        raise FileNotFoundError(f"Clip sorter script is missing: {source}")
-    shutil.copy2(source, dest)
-    return dest
+    lua_paths: list[Path] = []
+    for name in (
+        "obs_game_clip_sorter.lua",
+        "clipkit_clip_saved.lua",
+        "clipkit_toast.ps1",
+    ):
+        source = scripts_dir() / name
+        if not source.is_file():
+            if name.endswith(".lua"):
+                raise FileNotFoundError(f"OBS helper script is missing: {source}")
+            continue
+        dest = dest_dir / name
+        shutil.copy2(source, dest)
+        if dest.suffix.lower() == ".lua":
+            lua_paths.append(dest)
+    return lua_paths
 
 
 def _scene_collection(
@@ -447,6 +460,8 @@ def _scene_collection(
     existing: dict | None = None,
     mic_device_id: str = "default",
     sorter_path: Path | None = None,
+    script_paths: list[Path] | None = None,
+    binds: UserBinds | None = None,
 ) -> dict:
     existing = existing if isinstance(existing, dict) else {}
     existing_mic = existing.get("AuxAudioDevice1") if isinstance(existing.get("AuxAudioDevice1"), dict) else {}
@@ -456,34 +471,39 @@ def _scene_collection(
     scene_uuid = _keep_uuid(existing_scene)
     mic_uuid = _keep_uuid(existing_mic)
     capture_name = "Game Capture"
-    existing_desktop = existing.get("DesktopAudioDevice1") if isinstance(existing.get("DesktopAudioDevice1"), dict) else {}
+    binds = binds or DEFAULT_BINDS
+    mic_on = binds.mic_mode != "off"
+    ptt = binds.ptt_enabled and mic_on
 
+    # Settings → Audio global devices live on these scene-collection keys.
+    # Missing key = Disabled. device_id "default" = Default. A WASAPI id
+    # selects that hardware in the Mic/Auxiliary Audio dropdown.
     mic_source = _stock_audio(
-        "Mic",
+        "Mic/Auxiliary Audio",
         mic_uuid,
         "wasapi_input_capture",
-        mixers=TRACK_MIC,
+        mixers=TRACK_MIC if mic_on else 0,
         device_id=mic_device_id,
-        muted=False,
-        enabled=True,
+        muted=ptt,
+        enabled=mic_on,
+        push_to_talk=ptt,
+        ptt_hotkeys=binds.ptt_keys()[:2] if ptt else None,
         existing=existing_mic,
     )
 
-    desktop_source = _stock_audio(
-        "Desktop Audio",
-        _keep_uuid(existing_desktop),
-        "wasapi_output_capture",
-        mixers=0,
-        muted=True,
-        enabled=False,
-        existing=existing_desktop,
-    )
-
     scripts_tool: list[dict] = []
+    paths = list(script_paths or [])
     if sorter_path is not None:
+        paths.append(sorter_path)
+    seen: set[str] = set()
+    for path in paths:
+        posix = Path(path).resolve().as_posix()
+        if posix in seen:
+            continue
+        seen.add(posix)
         scripts_tool.append(
             {
-                "path": Path(sorter_path).resolve().as_posix(),
+                "path": posix,
                 "settings": {
                     "refresh_hotkey": [],
                     "debug_enabled": False,
@@ -491,10 +511,8 @@ def _scene_collection(
             }
         )
 
-    return {
+    collection = {
         "name": SCENE_NAME,
-        "DesktopAudioDevice1": desktop_source,
-        "AuxAudioDevice1": mic_source,
         "current_scene": "Game",
         "current_program_scene": "Game",
         "scene_order": [{"name": "Game"}],
@@ -596,6 +614,9 @@ def _scene_collection(
             },
         ],
     }
+    if mic_on:
+        collection["AuxAudioDevice1"] = mic_source
+    return collection
 
 
 def _bootstrap_config(config_dir: Path) -> None:
@@ -741,7 +762,11 @@ def apply_setup(
         shutil.copy2(user_ini, backup_dir / "user.ini")
 
     _remove_helper_scripts(config_dir)
-    sorter_path = _install_clip_sorter(config_dir)
+    script_paths = _install_obs_scripts(config_dir)
+    try:
+        install_toast_identity(find_obs_exe())
+    except OSError:
+        pass
 
     profile_dir = config_dir / "basic" / "profiles" / PROFILE_NAME
     profile_dir.mkdir(parents=True, exist_ok=True)
@@ -752,7 +777,7 @@ def apply_setup(
             output_dir,
             binds,
             enable_recording=enable_recording,
-            record_mic_track=True,
+            record_mic_track=binds.mic_mode != "off",
         ),
     )
     (profile_dir / "recordEncoder.json").write_text(
@@ -778,7 +803,8 @@ def apply_setup(
                 capture,
                 existing=existing_scene,
                 mic_device_id=mic_device_id,
-                sorter_path=sorter_path,
+                script_paths=script_paths,
+                binds=binds,
             ),
             indent=4,
         ),
@@ -802,8 +828,13 @@ def apply_setup(
         "clip_toggle": binds.replay_toggle.label,
         "record_toggle": binds.record_toggle.label if enable_recording else "off",
         "start_hotkey": binds.replay_toggle.label,
-        "mic": mic_name,
+        "mic": mic_name if binds.mic_mode != "off" else "off",
         "mic_device_id": mic_device_id,
+        "ptt": (
+            " / ".join(key.label for key in binds.ptt_keys()[:2])
+            if binds.ptt_enabled and binds.mic_mode != "off"
+            else "off"
+        ),
         "capture": (
             "This game (pick the window in OBS Game Capture)"
             if capture != "any"
@@ -814,7 +845,15 @@ def apply_setup(
         "quality": preset.label,
         "bitrate_kbps": preset.bitrate_kbps,
         "recording": enable_recording,
-        "audio": "game track 1, mic track 2",
+        "audio": (
+            "desktop off, mic track 2 (push to talk)"
+            if binds.ptt_enabled and binds.mic_mode != "off"
+            else "desktop off, mic track 2"
+            if binds.mic_mode != "off"
+            else "desktop off, mic off"
+        ),
         "windows_startup": bool(startup_path),
         "windows_startup_path": str(startup_path) if startup_path else "",
+        "sorter": True,
+        "clip_saved": True,
     }

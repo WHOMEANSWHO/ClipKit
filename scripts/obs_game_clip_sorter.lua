@@ -1517,26 +1517,6 @@ local function target_details(job, source_path)
     return target_folder, unique_target_path(target_folder, stem, extension)
 end
 
-local function toast_saved(title, message)
-    return
-end
-
-local function display_spaces(value)
-    return tostring(value or ""):gsub("_", " ")
-end
-
-local function toast_for_job(job)
-    local title = job.kind == "Clip" and "Clip" or "Recording"
-    local when = job.display_time or os.date("%d/%m/%Y %H:%M:%S")
-    local where
-    if job.game == "FiveM" then
-        where = display_spaces(job.server or fivem_fallback_server or "Unknown Server")
-    else
-        where = display_spaces(job.game or "Unknown Game")
-    end
-    toast_saved(title, where .. "@@" .. when)
-end
-
 local function move_with_windows_api(source_path, target_path)
     if ffi == nil or kernel32 == nil then
         return false, "Windows move API is unavailable"
@@ -1646,7 +1626,6 @@ local function process_job(index, now_ms)
             local moved, err = move_job_file(job)
             if moved then
                 log_info(job.kind .. " moved to: " .. job.target_path)
-                toast_for_job(job)
                 finish_job(index)
                 return true
             end
@@ -1672,7 +1651,6 @@ local function process_job(index, now_ms)
         local moved, err = move_job_file(job)
         if moved then
             log_info(job.kind .. " moved to: " .. job.target_path)
-            toast_for_job(job)
         else
             log_error(err .. "; the original file was left unchanged")
         end
