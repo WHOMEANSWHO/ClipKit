@@ -191,3 +191,22 @@ $config = Join-Path $env:APPDATA 'obs-studio'
         hw.notes.append("Low system RAM. The Low preset is safer.")
 
     return hw
+
+
+def obs_is_running() -> bool:
+    hidden = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+    for name in ("obs64.exe", "obs32.exe", "obs.exe"):
+        try:
+            result = subprocess.run(
+                ["tasklist", "/FI", f"IMAGENAME eq {name}", "/NH"],
+                capture_output=True,
+                text=True,
+                timeout=4,
+                creationflags=hidden,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        out = (result.stdout or "").lower()
+        if name in out and "no tasks" not in out:
+            return True
+    return False

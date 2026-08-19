@@ -9,7 +9,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from . import __version__
-from .hardware import Hardware, detect
+from .hardware import Hardware, detect, obs_is_running
 from .install_obs import find_obs_exe, install_obs, launch_obs_clipkit, obs_is_installed
 from .keys import DEFAULT_BINDS, Hotkey, UserBinds, from_tk
 from .obs import apply_setup, default_output_dir
@@ -142,6 +142,7 @@ class ClipKitApp(tk.Tk):
         self._build_style()
         self._build()
         self.after(100, self.refresh_hardware)
+        self.after(1500, self._poll_obs)
 
     def _build_style(self) -> None:
         style = ttk.Style(self)
@@ -432,7 +433,7 @@ class ClipKitApp(tk.Tk):
             justify="left",
         ).pack(anchor="w", padx=20, pady=(0, 16))
 
-        save = self._card(left, "Clips folder", "FiveM → FiveM\\Felicity Roleplay. Other games get their own folder.")
+        save = self._card(left, "Clips folder", "FiveM → FiveM\\Server name. Other games get their own folder.")
         path_row = tk.Frame(save, bg=PANEL)
         path_row.pack(fill="x", padx=20, pady=(4, 16))
         self._path_entry = ttk.Entry(path_row, textvariable=self._output, style="Dark.TEntry")
@@ -474,7 +475,7 @@ class ClipKitApp(tk.Tk):
         options = self._card(right, "Extras", "Leave these on unless you know you want them off.")
         self._check(options, "Sort clips into game / FiveM server folders", self._install_sorter)
         self._check(options, "Start replay buffer when OBS opens", self._install_autostart)
-        self._check(options, "Start OBS with Windows, hidden in the tray", self._start_with_windows)
+        self._check(options, "Start OBS with Windows", self._start_with_windows)
         self._check(
             options,
             "Full recording setup (same quality as clips)",
@@ -581,11 +582,9 @@ class ClipKitApp(tk.Tk):
             text=f"{hw.display_label}  ·  Recommended quality: {recommended.title()}"
         )
         notes = list(hw.notes)
+        self._set_obs_warning(hw.obs_running)
         if hw.obs_running:
-            self.warn_bar.pack(fill="x", before=self._main_shell)
             notes.insert(0, "Close OBS completely before applying.")
-        else:
-            self.warn_bar.pack_forget()
         self.notes_label.configure(text="\n".join(notes))
         self._sync_preset_copy()
         if hw.obs_installed:
@@ -618,6 +617,23 @@ class ClipKitApp(tk.Tk):
         for store, variable in self._chip_groups:
             if variable is self._preset_id:
                 self._refresh_chips(store, variable)
+
+    def _set_obs_warning(self, running: bool) -> None:
+        if self._hw:
+            self._hw.obs_running = running
+        shown = bool(self.warn_bar.winfo_manager())
+        if running and not shown:
+            self.warn_bar.pack(fill="x", before=self._main_shell)
+        elif not running and shown:
+            self.warn_bar.pack_forget()
+
+    def _poll_obs(self) -> None:
+        if not self._busy:
+            try:
+                self._set_obs_warning(obs_is_running())
+            except Exception:
+                pass
+        self.after(1500, self._poll_obs)
 
     def _browse(self) -> None:
         chosen = filedialog.askdirectory(title="Folder for clips")
@@ -718,27 +734,20 @@ class ClipKitApp(tk.Tk):
         seconds = int(result["clip_seconds"])
         length = f"{seconds} seconds" if seconds < 60 else f"{seconds // 60} minutes"
         bitrate = int(result.get("bitrate_kbps") or preset.bitrate_kbps)
-        just_installed = self._just_installed
         self._just_installed = False
-        launched = launch_obs_clipkit(minimize_to_tray=just_installed)
+        launched = launch_obs_clipkit()
         if launched:
-            if just_installed:
-                self._status.set(
-                    f"OBS is in the tray on ClipKit. Press {result['save_hotkey']} to save the last {length}."
-                )
-                next_step = "OBS is starting in the tray on the ClipKit profile, with clipping already on."
-            else:
-                self._status.set(
-                    f"OBS opened on ClipKit. Press {result['save_hotkey']} to save the last {length}."
-                )
-                next_step = "OBS opened on the ClipKit profile, with clipping already on."
+            self._status.set(
+                f"OBS opened on ClipKit. Press {result['save_hotkey']} to save the last {length}."
+            )
+            next_step = "OBS opened on the ClipKit profile, with clipping already on."
         else:
             self._status.set(
                 f"Done. Open OBS, then press {result['save_hotkey']} to save the last {length}."
             )
             next_step = "Open OBS, or wait until Windows login. Clipping starts by itself."
         if result.get("windows_startup"):
-            startup_line = "OBS starts with Windows in the tray"
+            startup_line = "OBS starts with Windows"
         elif self._start_with_windows.get():
             startup_line = "OBS Windows start: OBS was not found, skipped"
         else:

@@ -167,7 +167,7 @@ def migrate_legacy_obs_startup() -> None:
 
 
 def install_obs_windows_startup(obs_exe: Path | None = None) -> Path | None:
-    """Put a normal OBS shortcut in Windows Startup (tray + replay buffer)."""
+    """Put a normal OBS shortcut in Windows Startup (window + replay buffer)."""
     exe = Path(obs_exe) if obs_exe else find_obs_exe()
     if exe is None or not exe.is_file():
         return None
@@ -177,11 +177,11 @@ def install_obs_windows_startup(obs_exe: Path | None = None) -> Path | None:
         windows_startup_dir() / STARTUP_NAME,
         exe,
         arguments=(
-            "--minimize-to-tray --startreplaybuffer "
+            "--startreplaybuffer "
             "--profile ClipKit --collection ClipKit --disable-shutdown-check"
         ),
         working_directory=exe.parent,
         icon=exe,
         description="OBS Studio",
-        minimized=True,
+        minimized=False,
     )

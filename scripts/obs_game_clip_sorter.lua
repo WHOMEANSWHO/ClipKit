@@ -1004,7 +1004,7 @@ local function inspect_obs_source(source)
     end
 
     -- ClipKit hotkey / any capture must not lock folders to a leftover hooked
-    -- window. Otherwise a Fortnite clip stays in FiveM\Felicity.
+    -- window. Otherwise a Fortnite clip stays in the old FiveM server folder.
     if is_game_capture and (capture_mode == "hotkey" or capture_mode == "any") then
         return nil
     end
@@ -1687,7 +1687,7 @@ end
 local function queue_file_job(kind, delay_ms)
     -- Name the folder from the game in front at save time, so switching from
     -- FiveM to Fortnite creates vids\Fortnite instead of staying in
-    -- vids\FiveM\Felicity. If OBS or the desktop is in front, keep the last game.
+    -- vids\FiveM\Server. If OBS or the desktop is in front, keep the last game.
     local windows_result = detect_game_from_windows()
     if windows_result and not game_looks_generic(windows_result.game) then
         cached_game = windows_result.game
@@ -1892,7 +1892,7 @@ function script_description()
 <h2>OBS Game Clip Sorter</h2>
 <p><b>Version 1.1.2</b></p>
 <p>Automatically moves replay-buffer clips and recordings into folders for the current game.</p>
-<p>FiveM files go into a server subfolder, for example <code>FiveM\Felicity Roleplay</code>. Other games get their own folder, for example <code>Fortnite</code>.</p>
+<p>FiveM files go into a server subfolder, for example <code>FiveM\Server Name</code>. Other games get their own folder, for example <code>Fortnite</code>.</p>
 <p>After a move, you can get a Windows notification (works over fullscreen) and/or an on-screen popup on the main monitor.</p>
 <p><b>Leave the custom output folder blank to use your OBS save path automatically.</b></p>
 <p>Advanced settings are optional and hidden by default.</p>

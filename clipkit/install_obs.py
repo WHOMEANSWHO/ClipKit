@@ -373,24 +373,20 @@ def obs_is_installed() -> bool:
     return find_obs_exe() is not None
 
 
-def launch_obs_clipkit(*, minimize_to_tray: bool = True) -> bool:
-    """Start OBS with the ClipKit profile and replay buffer."""
+def launch_obs_clipkit() -> bool:
+    """Start OBS with the ClipKit profile and replay buffer, as a normal window."""
     exe = find_obs_exe()
     if exe is None or not exe.is_file():
         return False
-    args = [str(exe)]
-    if minimize_to_tray:
-        args.append("--minimize-to-tray")
-    args.extend(
-        [
-            "--startreplaybuffer",
-            "--profile",
-            "ClipKit",
-            "--collection",
-            "ClipKit",
-            "--disable-shutdown-check",
-        ]
-    )
+    args = [
+        str(exe),
+        "--startreplaybuffer",
+        "--profile",
+        "ClipKit",
+        "--collection",
+        "ClipKit",
+        "--disable-shutdown-check",
+    ]
     flags = 0
     if hasattr(subprocess, "DETACHED_PROCESS"):
         flags |= subprocess.DETACHED_PROCESS

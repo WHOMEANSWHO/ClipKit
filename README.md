@@ -1,59 +1,79 @@
 # ClipKit
 
-One-click OBS clipping setup for Discord communities. It looks at the PC, picks a **Low / Medium / High** preset, turns on Replay Buffer, and installs the game clip sorter so FiveM (and other games) land in named folders.
+One-click OBS clipping setup for Windows. ClipKit looks at the PC, installs official OBS Studio if it is missing, and writes a ready-to-use **ClipKit** profile: replay buffer, keys, game audio, mic, and folders for clips.
 
-If OBS is not installed, ClipKit downloads the **official** OBS Studio installer and sets it up.
+People in a Discord community can run **one file**. They do not need Python.
 
-## What it sets up
+## What you get
 
-- Quality: **Low / Medium / High** (one is marked recommended for their PC)
-- Recording bitrate: **8 / 10 / 12 / 14 / 20 / 25 Mbps** (default **14 Mbps**, same as 14000 in OBS)
-- Clip length: **30 seconds / 1 minute / 2 minutes / 5 minutes**
-- FPS: **30 or 60**
-- Capture: **this game** (press a key to switch) or **any fullscreen game**
-- Mic: **Push to talk** on Mouse 3 and Mouse 4 by default (or always on / off). Noise suppression is turned on.
-- Audio: **game on track 1**, **mic on track 2**. Discord and desktop sound are left out.
-- Default keys: **Num +** start/stop recording, **Num −** start/stop clipping, **Page Up** save clip, **F7** switch game (any key can be bound)
-- Starts **OBS with Windows**, hidden in the tray, with **Replay Buffer already running**
-- Windows notification and/or on-screen popup for **Clip** or **Recording**, with the date/time and FiveM server (notification works over fullscreen exclusive)
-- Files named like `Clip_Felicity_Roleplay_18-08-26_23-59-12.mp4`
-- OBS Studio itself, if it is missing
-- A separate OBS profile named **ClipKit**. Apply switches OBS onto that profile automatically (Untitled is left alone)
-- Encoder from the GPU it finds: NVIDIA NVENC, AMD, Intel Quick Sync, or x264
-- `obs_game_clip_sorter.lua` so clips go into `FiveM\Felicity Roleplay`, `Fortnite`, and so on
-- A helper that starts Replay Buffer when OBS opens and **beeps when a clip saves**
-- A Windows Startup shortcut for OBS (tray, clipping already on)
+- A separate OBS profile named **ClipKit** (your existing Untitled profile is left alone)
+- Replay buffer already running, so a hotkey saves the last 30 seconds, 1 minute, 2 minutes, or 5 minutes
+- Optional full recordings at the same quality
+- Game audio on track 1, mic on track 2 (push to talk, always on, or off)
+- Desktop / Discord audio left out
+- Clips sorted by game. FiveM goes into `FiveM\Server name`. Other games get their own folder, for example `Fortnite`
+- Files named like `Clip_Server_Name_18-08-26_23-59-12.mp4`
+- Windows notification and/or an on-screen popup when a clip or recording saves
+- OBS opened as a normal window (not hidden in the tray)
+- Optional start with Windows, with clipping already on
 
-## For Discord members
+Quality is **Low / Medium / High** from the PC’s GPU and display. Bitrate defaults to **14 Mbps** (same as 14000 in OBS). Encoder is picked automatically: NVIDIA NVENC, AMD, Intel Quick Sync, or x264.
 
-They do **not** need Python. Zip and share the built `dist\ClipKit` folder.
+## Requirements
 
-1. Unzip the folder.
+- Windows 10 or 11, 64-bit
+- Internet the first time, if OBS is not installed yet
+- A folder for clips
+
+## How to use it
+
+1. Download **ClipKit.exe** from [Releases](https://github.com/WHOMEANSWHO/ClipKit/releases) if one exists, or build it (below).
 2. Double-click **ClipKit.exe**.
-3. Pick a clips folder, keybinds, and Low / Medium / High.
-4. Click **Install OBS and set up** (or **Apply to OBS** if they already have it).
-5. Play, press the save-clip key after something happens. OBS can sit in the tray.
+3. Pick a clips folder, clip length, bitrate, and keys if you want to change them.
+4. Close OBS if it is already open (check the tray too).
+5. Click **Install OBS and set up**, or **Apply to OBS** if OBS is already installed.
+6. Play. Press the save-clip key after something happens.
 
-Windows may show SmartScreen the first time (unsigned app). More info → Run anyway.
+Windows SmartScreen may appear because the app is not signed. **More info → Run anyway**.
 
-If OBS is missing, ClipKit downloads the official installer, then sets up clipping, folders, keys, audio, and the replay buffer automatically. OBS then starts in the tray.
+If OBS is missing, ClipKit installs the official 64-bit OBS Studio, then sets everything else up and opens OBS on the ClipKit profile.
 
-FiveM works in **borderless / windowed fullscreen**. Click **Switch game** in ClipKit and press whatever key you want, then press that key while in the game (default is F7). If the preview is black, run OBS as administrator.
+## Keys (defaults)
 
-The sorter then moves files under the save location they chose: FiveM into `FiveM\Server`, other games into their own folder.
+| Action | Default |
+| --- | --- |
+| Save clip | Page Up |
+| Start / stop clipping | Num − |
+| Start / stop recording | Num + |
+| Switch captured game | F7 |
+| Push to talk | Mouse 3 and Mouse 4 |
 
-## For you (development)
+Any of these can be rebound in ClipKit.
+
+## FiveM and other games
+
+Use **borderless / windowed fullscreen** if you can. Press the **switch game** key while in the game so clips follow that title.
+
+FiveM clips land in `YourClipsFolder\FiveM\Server name`. Other games land in `YourClipsFolder\Game name`.
+
+If the OBS preview is black or game audio is missing, run OBS as administrator.
+
+## Build from source
 
 ```text
+python -m pip install -r requirements.txt
 python clipkit.py
 python clipkit.py --detect
 python build.py
 ```
 
-`--detect` prints GPU / RAM / recommended preset without writing anything. `build.py` makes `dist\ClipKit\ClipKit.exe` (PyInstaller, one-folder). That is what you send to Discord.
+`build.py` writes a single file: `dist\ClipKit.exe`. That is what you send to people.
 
-## After apply
+`--detect` prints GPU, RAM, and the recommended preset without changing OBS.
 
-OBS must be **fully closed** (also the tray icon) while ClipKit writes files. A timestamped backup of `user.ini` is stored in `%APPDATA%\obs-studio\clipkit-backups\`.
+## Notes
 
-Switch back anytime: OBS → Profile → Untitled.
+- OBS must be fully closed while ClipKit applies settings.
+- ClipKit searches common install folders, the registry, shortcuts, and other drives for OBS before it installs a new copy.
+- A backup of `user.ini` is stored in `%APPDATA%\obs-studio\clipkit-backups\`.
+- Switch back anytime in OBS: **Profile → Untitled**.

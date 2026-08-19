@@ -545,7 +545,7 @@ FirstRun=false
 PreviewEnabled=true
 SysTrayEnabled=true
 SysTrayWhenStarted=false
-SysTrayMinimizeToTray=true
+SysTrayMinimizeToTray=false
 
 [Basic]
 Profile=ClipKit
@@ -565,7 +565,7 @@ def _set_current_profile(parser: ConfigParser) -> None:
     parser.set("Basic", "SceneCollectionFile", f"{SCENE_NAME}.json")
 
 
-def _update_user_ini(config_dir: Path, *, hide_on_start: bool = False) -> None:
+def _update_user_ini(config_dir: Path) -> None:
     user_ini = config_dir / "user.ini"
     parser = _ini_parser()
     if user_ini.exists():
@@ -578,8 +578,8 @@ def _update_user_ini(config_dir: Path, *, hide_on_start: bool = False) -> None:
     if not parser.has_section("BasicWindow"):
         parser.add_section("BasicWindow")
     parser.set("BasicWindow", "SysTrayEnabled", "true")
-    parser.set("BasicWindow", "SysTrayMinimizeToTray", "true")
-    parser.set("BasicWindow", "SysTrayWhenStarted", "true" if hide_on_start else "false")
+    parser.set("BasicWindow", "SysTrayMinimizeToTray", "false")
+    parser.set("BasicWindow", "SysTrayWhenStarted", "false")
     with user_ini.open("w", encoding="utf-8", newline="\r\n") as handle:
         parser.write(handle, space_around_delimiters=False)
 
@@ -666,7 +666,7 @@ def apply_setup(
         encoding="utf-8",
     )
 
-    _update_user_ini(config_dir, hide_on_start=start_with_windows)
+    _update_user_ini(config_dir)
 
     startup_path = None
     if start_with_windows:
