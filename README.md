@@ -34,10 +34,11 @@ Quality is **Low / Medium / High** from the PC’s GPU and display. Bitrate defa
 
 1. Download **ClipKit.exe**.
 2. Double-click it.
-3. Pick a clips folder, clip length, bitrate, and keys if you want to change them.
+3. Pick a clips folder, clip length, bitrate, and keys if you want to change them. ClipKit remembers these next time.
 4. Close OBS if it is already open (check the tray too).
 5. Click **Install OBS and set up**, or **Apply to OBS** if OBS is already installed.
-6. Play. Press the save-clip key after something happens.
+6. Wait for the health check: OBS should be open on **ClipKit**, with the replay buffer on.
+7. Play. Press the save-clip key after something happens.
 
 Windows SmartScreen may appear because the app is not signed. **More info → Run anyway**.
 
@@ -81,4 +82,9 @@ python build.py
 - OBS must be fully closed while ClipKit applies settings.
 - ClipKit searches common install folders, the registry, shortcuts, and other drives for OBS before it installs a new copy.
 - A backup of `user.ini` is stored in `%APPDATA%\obs-studio\clipkit-backups\`.
+- Last folder, keys, bitrate, and the rest of the setup are stored in `%APPDATA%\ClipKit\settings.json`.
 - Switch back anytime in OBS: **Profile → Untitled**.
+
+## License
+
+MIT. See [LICENSE](LICENSE). You can use, share, and change ClipKit.

@@ -16,7 +16,7 @@ from pathlib import Path
 from .paths import app_dir
 
 GITHUB_LATEST = "https://api.github.com/repos/obsproject/obs-studio/releases/latest"
-USER_AGENT = "ClipKit/0.3 (https://obsproject.com)"
+USER_AGENT = "ClipKit/1.0 (https://github.com/WHOMEANSWHO/ClipKit)"
 WINGET_ID = "OBSProject.OBSStudio"
 OBS_EXE_NAMES = ("obs64.exe", "obs32.exe")
 _SKIP_PATH_PARTS = ("streamlabs", "windowsapps", "$recycle.bin", "system volume information")

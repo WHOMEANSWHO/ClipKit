@@ -9,7 +9,12 @@ a = Analysis(
     [str(spec_dir / "clipkit.pyw")],
     pathex=[str(spec_dir)],
     binaries=[],
-    datas=[(str(spec_dir / "scripts"), "scripts")],
+    datas=[
+        (str(spec_dir / "scripts"), "scripts"),
+        (str(spec_dir / "packaging" / "clipkit.ico"), "packaging"),
+        (str(spec_dir / "packaging" / "clipkit-icon.png"), "packaging"),
+        (str(spec_dir / "packaging" / "clipkit-mark.png"), "packaging"),
+    ],
     hiddenimports=[
         "tkinter",
         "tkinter.ttk",
@@ -44,4 +49,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=str(spec_dir / "packaging" / "clipkit.ico"),
 )

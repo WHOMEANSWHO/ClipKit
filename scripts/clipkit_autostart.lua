@@ -7,6 +7,31 @@ local ffi = nil
 local start_tries = 0
 local retry_running = false
 
+local function status_file()
+    local appdata = os.getenv("APPDATA")
+    if appdata == nil or appdata == "" then
+        return nil
+    end
+    return appdata .. "\\obs-studio\\clipkit-status.txt"
+end
+
+local function write_replay_status(on)
+    local path = status_file()
+    if path == nil then
+        return
+    end
+    local handle = io.open(path, "w")
+    if handle == nil then
+        return
+    end
+    if on then
+        handle:write("replay=1\n")
+    else
+        handle:write("replay=0\n")
+    end
+    handle:close()
+end
+
 local function try_beep()
     local ok, lib = pcall(require, "ffi")
     if not ok or lib == nil then
@@ -46,11 +71,13 @@ end
 function retry_start()
     start_tries = start_tries + 1
     if start_replay() then
+        write_replay_status(true)
         obs.script_log(obs.LOG_INFO, "[ClipKit] Replay Buffer started")
         stop_retry()
         return
     end
     if start_tries >= 10 then
+        write_replay_status(false)
         obs.script_log(obs.LOG_WARNING, "[ClipKit] Replay Buffer did not start")
         stop_retry()
     end
@@ -59,6 +86,7 @@ end
 local function begin_retry()
     start_tries = 0
     if start_replay() then
+        write_replay_status(true)
         obs.script_log(obs.LOG_INFO, "[ClipKit] Replay Buffer started")
         return
     end
@@ -71,6 +99,10 @@ end
 local function on_event(event)
     if event == obs.OBS_FRONTEND_EVENT_FINISHED_LOADING then
         begin_retry()
+    elseif obs.OBS_FRONTEND_EVENT_REPLAY_BUFFER_STARTED and event == obs.OBS_FRONTEND_EVENT_REPLAY_BUFFER_STARTED then
+        write_replay_status(true)
+    elseif obs.OBS_FRONTEND_EVENT_REPLAY_BUFFER_STOPPED and event == obs.OBS_FRONTEND_EVENT_REPLAY_BUFFER_STOPPED then
+        write_replay_status(false)
     elseif event == obs.OBS_FRONTEND_EVENT_REPLAY_BUFFER_SAVED then
         try_beep()
         obs.script_log(obs.LOG_INFO, "[ClipKit] Clip saved")
