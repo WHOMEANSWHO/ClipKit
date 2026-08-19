@@ -14,6 +14,9 @@ People in a Discord community can run **one file**. They do not need Python. The
 - Clips sorted by game. FiveM goes into `FiveM\Server name`. Other games get their own folder, for example `Fortnite`
 - Files named like `Clip_Server_Name_18-08-26_23-59-12.mp4`
 - Windows notification and/or an on-screen popup when a clip or recording saves
+- **Test clip** saves the buffer and opens the clips folder so you know it works
+- **Open** next to the clips path shows that folder
+- Health check names the hooked game, not only whether OBS and the replay buffer are on
 - OBS opened as a normal window (not hidden in the tray)
 - Optional start with Windows, with clipping already on
 
@@ -37,11 +40,12 @@ Do not download `release/ClipKit.exe` from the repo tree. That copy can sit behi
 1. Download **ClipKit.exe**.
 2. Double-click it. Windows may ask to allow it — ClipKit then installs itself under your user account.
 3. Open it from the **Start menu** next time. Uninstall from **Settings → Apps**.
-4. Pick a clips folder, clip length, bitrate, and keys if you want to change them. ClipKit remembers these next time.
+4. Pick a clips folder, clip length, bitrate, and keys if you want to change them. ClipKit remembers these next time. **Open** next to the path shows that folder.
 5. Close OBS if it is already open (check the tray too).
 6. Click **Install OBS and set up**, or **Apply to OBS** if OBS is already installed.
-7. Wait for the health check: OBS should be open on **ClipKit**, with the replay buffer on.
-8. Play. Press the save-clip key after something happens.
+7. Wait for the health check: OBS should be open on **ClipKit**, with the replay buffer on, and it should name the hooked game if you have already captured one.
+8. Click **Test clip** once OBS is open. ClipKit saves the buffer and opens the clips folder so you know it works before you play.
+9. Play. Press the save-clip key after something happens.
 
 Windows SmartScreen may appear because the app is not signed. **More info → Run anyway**.
 
@@ -55,7 +59,7 @@ If OBS is missing, ClipKit installs the official 64-bit OBS Studio, then sets ev
 | Start / stop clipping | Num − |
 | Start / stop recording | Num + |
 | Switch captured game | F7 |
-| Push to talk | Mouse 3 and Mouse 4 |
+| Push to talk | Mouse 4 and Mouse 5 (side buttons) |
 
 Any of these can be rebound in ClipKit.
 

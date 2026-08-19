@@ -33,12 +33,34 @@ local IGNORE_EXE = {
     taskmgr = true,
 }
 
+local last_status_key = ""
+local save_pending = false
+local command_timer_on = false
+local last_from_source
+local read_last_game
+
 local function status_file()
     local appdata = os.getenv("APPDATA")
     if appdata == nil or appdata == "" then
         return nil
     end
     return appdata .. "\\obs-studio\\clipkit-status.txt"
+end
+
+local function command_file()
+    local appdata = os.getenv("APPDATA")
+    if appdata == nil or appdata == "" then
+        return nil
+    end
+    return appdata .. "\\obs-studio\\clipkit-command.txt"
+end
+
+local function save_result_file()
+    local appdata = os.getenv("APPDATA")
+    if appdata == nil or appdata == "" then
+        return nil
+    end
+    return appdata .. "\\obs-studio\\clipkit-save-result.txt"
 end
 
 local function last_game_path()
@@ -49,20 +71,26 @@ local function last_game_path()
     return appdata .. "\\ClipKit\\last-game.json"
 end
 
-local function write_replay_status(on)
-    local path = status_file()
-    if path == nil then
+local function one_line(text)
+    return tostring(text or ""):gsub("[\r\n]", " ")
+end
+
+local function write_save_result(ok, path, err)
+    local dest = save_result_file()
+    if dest == nil then
         return
     end
-    local handle = io.open(path, "w")
+    local handle = io.open(dest, "w")
     if handle == nil then
         return
     end
-    if on then
-        handle:write("replay=1\n")
+    if ok then
+        handle:write("ok=1\n")
     else
-        handle:write("replay=0\n")
+        handle:write("ok=0\n")
     end
+    handle:write("path=" .. one_line(path) .. "\n")
+    handle:write("error=" .. one_line(err) .. "\n")
     handle:close()
 end
 
@@ -149,6 +177,43 @@ end
 local function replay_is_on()
     local ok, active = pcall(obs.obs_frontend_replay_buffer_active)
     return ok and active
+end
+
+local function current_game()
+    local game = last_from_source and last_from_source() or nil
+    if game == nil and read_last_game then
+        game = read_last_game()
+    end
+    return game
+end
+
+local function write_replay_status(on)
+    local path = status_file()
+    if path == nil then
+        return
+    end
+    local game = current_game()
+    local exe = game and one_line(game.exe) or ""
+    local title = game and one_line(game.title) or ""
+    local family = game and one_line(game.family) or ""
+    local key = tostring(on and 1 or 0) .. "|" .. exe .. "|" .. title .. "|" .. family
+    if key == last_status_key then
+        return
+    end
+    last_status_key = key
+    local handle = io.open(path, "w")
+    if handle == nil then
+        return
+    end
+    if on then
+        handle:write("replay=1\n")
+    else
+        handle:write("replay=0\n")
+    end
+    handle:write("exe=" .. exe .. "\n")
+    handle:write("title=" .. title .. "\n")
+    handle:write("family=" .. family .. "\n")
+    handle:close()
 end
 
 local function start_replay()
@@ -251,7 +316,7 @@ local function ignored_exe(name)
     return IGNORE_EXE[exe_stem(name)] == true
 end
 
-local function read_last_game()
+read_last_game = function()
     local path = last_game_path()
     if path == nil then
         return nil
@@ -563,7 +628,7 @@ local function parse_window_spec(spec)
     }
 end
 
-local function last_from_source()
+last_from_source = function()
     local source = obs.obs_get_source_by_name("Game Capture")
     if source == nil then
         return nil
@@ -581,6 +646,7 @@ end
 
 function remember_tick()
     if not remember_enabled or capture_mode_is_any() then
+        write_replay_status(replay_is_on())
         return
     end
     local last = read_last_game()
@@ -591,6 +657,7 @@ function remember_tick()
         end
     end
     if last == nil then
+        write_replay_status(replay_is_on())
         return
     end
     local target = find_target(last)
@@ -601,6 +668,7 @@ function remember_tick()
         write_last_game(target)
         set_game_capture(target)
     end
+    write_replay_status(replay_is_on())
 end
 
 local function start_remember()
@@ -798,6 +866,60 @@ local function load_switch_hotkey(settings)
     end
 end
 
+local function save_replay_now()
+    if not replay_is_on() then
+        start_replay()
+        if not replay_is_on() then
+            save_pending = true
+            return
+        end
+    end
+    save_pending = false
+    local ok = pcall(obs.obs_frontend_replay_buffer_save)
+    if not ok then
+        write_save_result(false, "", "OBS could not save the replay buffer")
+    end
+end
+
+function command_tick()
+    if save_pending then
+        if replay_is_on() then
+            save_replay_now()
+        end
+        return
+    end
+    local path = command_file()
+    if path == nil then
+        return
+    end
+    local handle = io.open(path, "r")
+    if handle == nil then
+        return
+    end
+    local cmd = handle:read("*a") or ""
+    handle:close()
+    pcall(os.remove, path)
+    if cmd:find("save", 1, true) then
+        save_replay_now()
+    end
+end
+
+local function start_command()
+    if command_timer_on then
+        return
+    end
+    obs.timer_add(command_tick, 250)
+    command_timer_on = true
+end
+
+local function stop_command()
+    if command_timer_on then
+        obs.timer_remove(command_tick)
+        command_timer_on = false
+    end
+    save_pending = false
+end
+
 local function on_event(event)
     if event == obs.OBS_FRONTEND_EVENT_FINISHED_LOADING then
         disable_desktop_audio()
@@ -811,6 +933,11 @@ local function on_event(event)
         write_replay_status(false)
     elseif event == obs.OBS_FRONTEND_EVENT_REPLAY_BUFFER_SAVED then
         try_beep()
+        local clip_path = ""
+        pcall(function()
+            clip_path = obs.obs_frontend_get_last_replay() or ""
+        end)
+        write_save_result(true, clip_path, "")
         obs.script_log(obs.LOG_INFO, "[ClipKit] Clip saved")
     elseif event == obs.OBS_FRONTEND_EVENT_RECORDING_STOPPED then
         try_beep()
@@ -823,6 +950,7 @@ function script_description()
 <h2>ClipKit Helper</h2>
 <p>Starts Replay Buffer when OBS opens, and beeps when a clip or recording saves.</p>
 <p>Remembers the last game you hooked. FiveM recaptures from any shortcut or build.</p>
+<p>Saves a test clip when ClipKit asks, and reports which game is hooked.</p>
 <p>The clip sorter shows the main-monitor popup after the file is in the game folder.</p>
 ]]
 end
@@ -840,6 +968,7 @@ function script_load(settings)
     begin_retry()
     load_ptt(settings)
     start_ptt()
+    start_command()
     if remember_enabled then
         load_switch_hotkey(settings)
         start_remember()
@@ -858,6 +987,7 @@ function script_unload()
     stop_retry()
     stop_remember()
     stop_ptt()
+    stop_command()
     pcall(function()
         obs.timer_remove(hide_desktop_tick)
     end)

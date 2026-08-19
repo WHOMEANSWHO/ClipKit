@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import threading
+import time
 import traceback
 from pathlib import Path
 import tkinter as tk
@@ -11,7 +13,14 @@ from tkinter import filedialog, messagebox, ttk
 from . import __version__
 from .audio import CaptureDevice, pick_microphone
 from .hardware import Hardware, detect, load_cached_hardware, obs_is_running
-from .health import clear_status, probe
+from .health import (
+    clear_status,
+    newest_clip,
+    probe,
+    request_test_clip,
+    reveal_in_explorer,
+    wait_for_save_result,
+)
 from .install_obs import (
     find_obs_exe,
     fresh_install_obs,
@@ -392,6 +401,23 @@ class ClipKitApp(tk.Tk):
             cursor="hand2",
         )
         self.apply_btn.pack(side="right")
+        self.test_btn = tk.Button(
+            bar,
+            text="Test clip",
+            command=self.test_clip,
+            bg=SURFACE,
+            fg=TEXT,
+            activebackground=RAISED,
+            activeforeground=PRIMARY,
+            disabledforeground=MUTED,
+            relief="flat",
+            bd=0,
+            padx=20,
+            pady=12,
+            font=(UI, 11, "bold"),
+            cursor="hand2",
+        )
+        self.test_btn.pack(side="right", padx=(0, 10))
 
         shell = tk.Frame(self, bg=BG)
         shell.pack(fill="both", expand=True, padx=28, pady=(16, 0))
@@ -515,6 +541,9 @@ class ClipKitApp(tk.Tk):
         path_row.pack(fill="x", padx=20, pady=(4, 16))
         self._path_entry = ttk.Entry(path_row, textvariable=self._output, style="Dark.TEntry")
         self._path_entry.pack(side="left", fill="x", expand=True, ipady=6)
+        ttk.Button(path_row, text="Open", style="Ghost.TButton", command=self._open_clips_folder).pack(
+            side="left", padx=(8, 0)
+        )
         ttk.Button(path_row, text="Browse", style="Ghost.TButton", command=self._browse).pack(side="left", padx=(8, 0))
 
         binds = self._card(right, "Keybinds", "Click a keycap, then press the key or mouse button.")
@@ -836,9 +865,88 @@ class ClipKitApp(tk.Tk):
         if chosen:
             self._output.set(chosen)
 
+    def _open_clips_folder(self) -> None:
+        folder = self._output.get().strip()
+        if not folder:
+            messagebox.showerror("Clips folder", "Pick a folder where clips should be saved.")
+            return
+        try:
+            reveal_in_explorer(Path(folder))
+        except OSError as exc:
+            messagebox.showerror("Clips folder", f"Could not open that folder.\n\n{exc}")
+
+    def test_clip(self) -> None:
+        if self._busy:
+            return
+        folder = self._output.get().strip()
+        if not folder:
+            messagebox.showerror("Clips folder", "Pick a folder where clips should be saved.")
+            return
+        if not obs_is_running():
+            messagebox.showerror(
+                "OBS is not open",
+                "Open OBS on the ClipKit profile first (Apply if you have not), then click Test clip.",
+            )
+            return
+        self._set_busy(True, "Saving a test clip…")
+        threading.Thread(target=self._test_clip_bg, args=(Path(folder),), daemon=True).start()
+
+    def _test_clip_bg(self, folder: Path) -> None:
+        started = time.time() - 1
+        try:
+            request_test_clip()
+            result = wait_for_save_result()
+        except OSError as exc:
+            err = str(exc)
+            self.after(
+                0,
+                lambda f=folder, e=err: self._test_clip_done(f, {"ok": False, "path": "", "error": e}, None),
+            )
+            return
+        clip = None
+        if result.get("ok"):
+            for _ in range(20):
+                clip = newest_clip(folder, after=started)
+                if clip is not None:
+                    break
+                time.sleep(0.25)
+            raw = str(result.get("path") or "").strip()
+            if clip is None and raw:
+                candidate = Path(raw)
+                if candidate.is_file():
+                    clip = candidate
+        self.after(0, lambda f=folder, r=result, c=clip: self._test_clip_done(f, r, c))
+
+    def _test_clip_done(self, folder: Path, result: dict, clip: Path | None) -> None:
+        self._set_busy(False)
+        if not result.get("ok"):
+            self._status.set("Test clip did not save.")
+            messagebox.showerror(
+                "Test clip",
+                result.get("error")
+                or "OBS did not save a clip. Apply ClipKit once, keep OBS open, and make sure clipping is on.",
+            )
+            return
+        target = clip if clip is not None else folder
+        try:
+            reveal_in_explorer(target)
+        except OSError:
+            try:
+                os.startfile(os.fsdecode(folder))
+            except OSError as exc:
+                self._status.set("Test clip saved, but the folder would not open.")
+                messagebox.showerror("Clips folder", str(exc))
+                return
+        if clip is not None:
+            self._status.set(f"Test clip saved: {clip.name}")
+        else:
+            self._status.set("Test clip saved. Clips folder opened.")
+
     def _set_busy(self, busy: bool, message: str | None = None) -> None:
         self._busy = busy
         self.apply_btn.configure(state="disabled" if busy else "normal", bg=RAISED if busy else PRIMARY_BTN)
+        if getattr(self, "test_btn", None):
+            self.test_btn.configure(state="disabled" if busy else "normal")
         if getattr(self, "fresh_btn", None):
             self.fresh_btn.configure(state="disabled" if busy else "normal")
         if message:
@@ -1018,10 +1126,18 @@ class ClipKitApp(tk.Tk):
         leave_extract_dir()
 
     def _health_verdict(self, info: dict, *, expect_replay: bool) -> tuple[str, bool]:
+        game = str(info.get("game") or "").strip()
+        if game:
+            hooked = game
+        elif self._capture.get() == "any":
+            hooked = "any fullscreen game"
+        else:
+            hooked = "none yet — press Switch game in-game"
         lines = [
             f"OBS: {info['obs']}",
             f"Profile: {info['profile']}",
             f"Replay buffer: {info['replay']}",
+            f"Hooked game: {hooked}",
         ]
         ok = bool(info.get("ok"))
         if ok:
@@ -1097,6 +1213,7 @@ class ClipKitApp(tk.Tk):
                     f"Clip length: last {length} at {result.get('fps', self._fps.get())} fps",
                     f"Capture: {result.get('capture', self._capture.get())}",
                     f"Clips save to: {result.get('output_dir', self._output.get())}",
+                    f"Hooked game: {info.get('game') or 'none yet — press Switch game in-game'}",
                     f"Save clip: {result.get('save_hotkey', '')}",
                     f"Start/stop clipping: {result.get('clip_toggle', '')}",
                     f"Start/stop recording: {result.get('record_toggle', '')}",
