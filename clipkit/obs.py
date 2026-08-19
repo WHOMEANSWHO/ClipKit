@@ -1,4 +1,4 @@
-"""Write a ClipKit OBS profile, scene, scripts, and hotkeys."""
+"""Write a ClipKit OBS profile, scene, and hotkeys."""
 
 from __future__ import annotations
 
@@ -10,13 +10,11 @@ from configparser import ConfigParser
 from datetime import datetime
 from pathlib import Path
 
+from .audio import list_capture_devices, resolve_microphone
 from .install_obs import find_obs_exe
-from .keys import DEFAULT_BINDS, Hotkey, UserBinds
-from .audio import list_capture_devices, pick_microphone
-from .notifications import install_toast_identity
-from .paths import scripts_dir as repo_scripts_dir
+from .keys import DEFAULT_BINDS, UserBinds
+from .paths import scripts_dir
 from .presets import Preset
-from .settings import load_last_game, migrate_obs_sidecars, save_ptt_config
 from .startup import install_obs_windows_startup, remove_obs_windows_startup
 
 PROFILE_NAME = "ClipKit"
@@ -167,7 +165,7 @@ MultitrackVideoMaximumVideoTracksAuto=true
 
 [SimpleOutput]
 FilePath={rec_path}
-RecFormat2=hybrid_mp4
+RecFormat2=mp4
 VBitrate={preset.bitrate_kbps}
 ABitrate=160
 UseAdvanced=false
@@ -192,7 +190,7 @@ VodTrackIndex=2
 Encoder=obs_x264
 RecType=Standard
 RecFilePath={rec_path}
-RecFormat2=hybrid_mp4
+RecFormat2=mp4
 RecUseRescale=false
 RecTracks={rec_tracks}
 RecEncoder={preset.encoder_id}
@@ -262,13 +260,6 @@ ReplayBuffer={save_ini}
 """
 
 
-def _window_spec(last_game: dict) -> str:
-    title = str(last_game.get("title") or "").replace(":", " ")
-    klass = str(last_game.get("class") or "").replace(":", " ")
-    exe = str(last_game.get("exe") or "").replace(":", " ")
-    return f"{title}:{klass}:{exe}"
-
-
 def _load_json(path: Path) -> dict | None:
     if not path.is_file():
         return None
@@ -303,14 +294,11 @@ def _keep_prev_ver(existing: dict | None) -> int:
 def _capture_source(
     kind: str,
     source_uuid: str,
-    binds: UserBinds,
     existing: dict | None = None,
 ) -> dict:
     # "any" grabs whichever fullscreen game is in front.
-    # "This game" keeps a switch hotkey and reopens the last hooked game.
-    # Any FiveM shortcut / build counts as the same game.
-    last_game = load_last_game() if kind != "any" else {}
-    start_binds = [binds.hook_game.binding()] if kind != "any" else []
+    # "This game" uses a normal OBS Game Capture window list. People pick
+    # FiveM / Fortnite / etc. in OBS themselves.
     existing_settings = existing.get("settings") if isinstance(existing, dict) else None
     if not isinstance(existing_settings, dict):
         existing_settings = {}
@@ -320,16 +308,12 @@ def _capture_source(
     }
     if kind == "any":
         settings["capture_mode"] = "any"
-    elif last_game.get("exe"):
-        settings["capture_mode"] = "window"
-        settings["window"] = _window_spec(last_game)
-    elif existing_settings.get("window"):
-        settings["capture_mode"] = str(existing_settings.get("capture_mode") or "window")
-        settings["window"] = existing_settings["window"]
-        if existing_settings.get("priority") is not None:
-            settings["priority"] = existing_settings["priority"]
     else:
-        settings["capture_mode"] = "hotkey"
+        settings["capture_mode"] = "window"
+        if existing_settings.get("window"):
+            settings["window"] = existing_settings["window"]
+            if existing_settings.get("priority") is not None:
+                settings["priority"] = existing_settings["priority"]
     return {
         "prev_ver": _keep_prev_ver(existing),
         "name": "Game Capture",
@@ -353,25 +337,116 @@ def _capture_source(
             "libobs.unmute": [],
             "libobs.push-to-mute": [],
             "libobs.push-to-talk": [],
-            "hotkey_start": start_binds,
+            "hotkey_start": [],
             "hotkey_stop": [],
         },
         "deinterlace_mode": 0,
         "deinterlace_field_order": 0,
         "monitoring_type": 0,
         "private_settings": {},
+        "filters": [],
     }
+
+
+def _stock_audio(
+    name: str,
+    source_uuid: str,
+    source_id: str,
+    *,
+    mixers: int = 0,
+    device_id: str = "default",
+    muted: bool = False,
+    enabled: bool = True,
+    existing: dict | None = None,
+) -> dict:
+    return {
+        "prev_ver": _keep_prev_ver(existing),
+        "name": name,
+        "uuid": source_uuid,
+        "id": source_id,
+        "versioned_id": source_id,
+        "settings": {"device_id": device_id},
+        "mixers": mixers,
+        "sync": 0,
+        "flags": 0,
+        "volume": 1.0,
+        "balance": 0.5,
+        "enabled": enabled,
+        "muted": muted,
+        "push-to-mute": False,
+        "push-to-mute-delay": 0,
+        "push-to-talk": False,
+        "push-to-talk-delay": 0,
+        "hotkeys": {
+            "libobs.mute": [],
+            "libobs.unmute": [],
+            "libobs.push-to-mute": [],
+            "libobs.push-to-talk": [],
+        },
+        "deinterlace_mode": 0,
+        "deinterlace_field_order": 0,
+        "monitoring_type": 0,
+        "private_settings": {},
+        "filters": [],
+    }
+
+
+def _existing_mic_device_id(existing_mic: dict) -> str:
+    settings = existing_mic.get("settings")
+    if not isinstance(settings, dict):
+        return ""
+    return str(settings.get("device_id") or "").strip()
+
+
+def _chosen_microphone(existing_mic: dict, preferred_id: str = "") -> tuple[str, str]:
+    device = resolve_microphone(
+        list_capture_devices(),
+        preferred_id=preferred_id,
+        existing_id=_existing_mic_device_id(existing_mic),
+    )
+    if device is None:
+        return "default", "Windows default"
+    return device.device_id, device.short_name
+
+
+def _remove_helper_scripts(config_dir: Path) -> None:
+    folder = config_dir / "clipkit-scripts"
+    for name in (
+        "clipkit_autostart.lua",
+        "clipkit_toast.ps1",
+        "last-game.json",
+        "ptt.json",
+    ):
+        path = folder / name
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            continue
+    for name in ("clipkit-command.txt", "clipkit-status.txt", "clipkit-save-result.txt"):
+        path = config_dir / name
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            continue
+
+
+def _install_clip_sorter(config_dir: Path) -> Path:
+    dest_dir = config_dir / "clipkit-scripts"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / "obs_game_clip_sorter.lua"
+    source = scripts_dir() / "obs_game_clip_sorter.lua"
+    if not source.is_file():
+        raise FileNotFoundError(f"Clip sorter script is missing: {source}")
+    shutil.copy2(source, dest)
+    return dest
 
 
 def _scene_collection(
     preset: Preset,
-    script_paths: list[Path],
-    binds: UserBinds,
-    capture: str = "hotkey",
-    *,
-    show_notifications: bool = True,
-    show_popup: bool = True,
+    capture: str = "window",
     existing: dict | None = None,
+    mic_device_id: str = "default",
+    sorter_path: Path | None = None,
 ) -> dict:
     existing = existing if isinstance(existing, dict) else {}
     existing_mic = existing.get("AuxAudioDevice1") if isinstance(existing.get("AuxAudioDevice1"), dict) else {}
@@ -380,110 +455,46 @@ def _scene_collection(
     game_uuid = _keep_uuid(existing_game)
     scene_uuid = _keep_uuid(existing_scene)
     mic_uuid = _keep_uuid(existing_mic)
-    existing_filters = existing_mic.get("filters") if isinstance(existing_mic.get("filters"), list) else []
-    filter_uuid = _keep_uuid(existing_filters[0] if existing_filters and isinstance(existing_filters[0], dict) else None)
     capture_name = "Game Capture"
-    scripts = []
-    for path in script_paths:
-        posix = path.as_posix()
-        if path.name == "obs_game_clip_sorter.lua":
-            settings = {
-                "refresh_hotkey": [],
-                "debug_enabled": False,
-                "show_notifications": show_notifications,
-                "show_popup": show_popup,
-            }
-        elif path.name == "clipkit_autostart.lua":
-            settings = {
-                "remember_game": capture != "any",
-                "switch_game": [binds.hook_game.binding()] if capture != "any" else [],
-                "ptt_enabled": binds.ptt_enabled,
-                "ptt_keys": ",".join(key.obs_key for key in binds.ptt_keys()) if binds.ptt_enabled else "",
-            }
-        else:
-            settings = {}
-        scripts.append({"path": posix, "settings": settings})
+    existing_desktop = existing.get("DesktopAudioDevice1") if isinstance(existing.get("DesktopAudioDevice1"), dict) else {}
 
-    def audio_source(
-        name: str,
-        source_uuid: str,
-        source_id: str,
-        *,
-        push_to_talk: bool = False,
-        ptt_hotkeys: list[Hotkey] | None = None,
-        muted: bool = False,
-        mixers: int = 0,
-        filters: list[dict] | None = None,
-        device_id: str = "default",
-        enabled: bool = True,
-        prev_ver: int = 537001985,
-        volume: float = 1.0,
-    ) -> dict:
-        ptt_binds = [key.binding() for key in (ptt_hotkeys or [])] if push_to_talk else []
-        data = {
-            "prev_ver": prev_ver,
-            "name": name,
-            "uuid": source_uuid,
-            "id": source_id,
-            "versioned_id": source_id,
-            "settings": {"device_id": device_id},
-            "mixers": mixers,
-            "sync": 0,
-            "flags": 0,
-            "volume": volume,
-            "balance": 0.5,
-            "enabled": enabled,
-            "muted": muted,
-            "push-to-mute": False,
-            "push-to-mute-delay": 0,
-            "push-to-talk": push_to_talk,
-            "push-to-talk-delay": 0,
-            "hotkeys": {
-                "libobs.mute": [],
-                "libobs.unmute": [],
-                "libobs.push-to-mute": [],
-                "libobs.push-to-talk": ptt_binds,
-            },
-            "deinterlace_mode": 0,
-            "deinterlace_field_order": 0,
-            "monitoring_type": 0,
-            "private_settings": {},
-        }
-        if filters:
-            data["filters"] = filters
-        return data
+    mic_source = _stock_audio(
+        "Mic",
+        mic_uuid,
+        "wasapi_input_capture",
+        mixers=TRACK_MIC,
+        device_id=mic_device_id,
+        muted=False,
+        enabled=True,
+        existing=existing_mic,
+    )
 
-    mic_on = binds.mic_mode != "off"
-    mic_filters = []
-    if mic_on:
-        mic_filters.append(
+    desktop_source = _stock_audio(
+        "Desktop Audio",
+        _keep_uuid(existing_desktop),
+        "wasapi_output_capture",
+        mixers=0,
+        muted=True,
+        enabled=False,
+        existing=existing_desktop,
+    )
+
+    scripts_tool: list[dict] = []
+    if sorter_path is not None:
+        scripts_tool.append(
             {
-                "prev_ver": _keep_prev_ver(existing_filters[0] if existing_filters and isinstance(existing_filters[0], dict) else None),
-                "name": "Noise Suppression",
-                "uuid": filter_uuid,
-                "id": "noise_suppress_filter_v2",
-                "versioned_id": "noise_suppress_filter_v2",
-                "settings": {"method": "rnnoise"},
-                "enabled": True,
+                "path": Path(sorter_path).resolve().as_posix(),
+                "settings": {
+                    "refresh_hotkey": [],
+                    "debug_enabled": False,
+                },
             }
         )
 
     return {
         "name": SCENE_NAME,
-        "AuxAudioDevice1": audio_source(
-            "Mic",
-            mic_uuid,
-            "wasapi_input_capture",
-            push_to_talk=binds.ptt_enabled,
-            ptt_hotkeys=binds.ptt_keys() if binds.ptt_enabled else None,
-            muted=not mic_on or binds.ptt_enabled,
-            mixers=TRACK_MIC if mic_on else 0,
-            filters=mic_filters,
-            device_id=binds.mic_device_id or "default",
-            enabled=mic_on,
-            prev_ver=_keep_prev_ver(existing_mic),
-            volume=float(existing_mic.get("volume") or 1.0),
-        ),
+        "DesktopAudioDevice1": desktop_source,
+        "AuxAudioDevice1": mic_source,
         "current_scene": "Game",
         "current_program_scene": "Game",
         "scene_order": [{"name": "Game"}],
@@ -501,7 +512,7 @@ def _scene_collection(
         "scaling_off_y": 0.0,
         "virtual-camera": {"type2": 3},
         "modules": {
-            "scripts-tool": scripts,
+            "scripts-tool": scripts_tool,
             "output-timer": {
                 "streamTimerHours": 0,
                 "streamTimerMinutes": 0,
@@ -517,7 +528,7 @@ def _scene_collection(
         "resolution": {"x": preset.canvas_width, "y": preset.canvas_height},
         "version": 2,
         "sources": [
-            _capture_source(capture, game_uuid, binds, existing_game),
+            _capture_source(capture, game_uuid, existing_game),
             {
                 "prev_ver": _keep_prev_ver(existing_scene),
                 "name": "Game",
@@ -581,6 +592,7 @@ def _scene_collection(
                 "monitoring_type": 0,
                 "canvas_uuid": str((existing_scene or {}).get("canvas_uuid") or "6c69626f-6273-4c00-9d88-c5136d61696e"),
                 "private_settings": {},
+                "filters": [],
             },
         ],
     }
@@ -709,29 +721,15 @@ def apply_setup(
     preset: Preset,
     output_dir: Path,
     *,
-    install_sorter: bool = True,
-    install_autostart: bool = True,
     make_default: bool = True,
     config_dir: Path | None = None,
     binds: UserBinds | None = None,
-    capture: str = "hotkey",
+    capture: str = "window",
     enable_recording: bool = True,
-    show_notifications: bool = True,
-    show_popup: bool = True,
     start_with_windows: bool = False,
 ) -> dict:
     binds = binds or DEFAULT_BINDS
-    if binds.mic_mode != "off":
-        preferred = binds.mic_device_id
-        if not preferred or preferred.lower() == "default":
-            chosen = pick_microphone(list_capture_devices())
-        else:
-            chosen = pick_microphone(list_capture_devices(), preferred)
-        if chosen is not None:
-            binds.mic_device_id = chosen.device_id
-            binds.mic_device_name = chosen.name
-    if start_with_windows:
-        install_autostart = True
+    capture = "any" if capture == "any" else "window"
     config_dir = Path(config_dir) if config_dir else obs_config_dir()
     _bootstrap_config(config_dir)
 
@@ -742,24 +740,8 @@ def apply_setup(
     if user_ini.exists():
         shutil.copy2(user_ini, backup_dir / "user.ini")
 
-    installed_scripts_dir = config_dir / "clipkit-scripts"
-    installed_scripts_dir.mkdir(parents=True, exist_ok=True)
-    migrate_obs_sidecars()
-    source_scripts = repo_scripts_dir()
-    script_paths: list[Path] = []
-    copied = []
-
-    if install_sorter:
-        dest = installed_scripts_dir / "obs_game_clip_sorter.lua"
-        shutil.copy2(source_scripts / "obs_game_clip_sorter.lua", dest)
-        script_paths.append(dest)
-        copied.append(str(dest))
-        shutil.copy2(source_scripts / "clipkit_toast.ps1", installed_scripts_dir / "clipkit_toast.ps1")
-    if install_autostart:
-        dest = installed_scripts_dir / "clipkit_autostart.lua"
-        shutil.copy2(source_scripts / "clipkit_autostart.lua", dest)
-        script_paths.append(dest)
-        copied.append(str(dest))
+    _remove_helper_scripts(config_dir)
+    sorter_path = _install_clip_sorter(config_dir)
 
     profile_dir = config_dir / "basic" / "profiles" / PROFILE_NAME
     profile_dir.mkdir(parents=True, exist_ok=True)
@@ -770,7 +752,7 @@ def apply_setup(
             output_dir,
             binds,
             enable_recording=enable_recording,
-            record_mic_track=binds.mic_mode != "off",
+            record_mic_track=True,
         ),
     )
     (profile_dir / "recordEncoder.json").write_text(
@@ -783,16 +765,20 @@ def apply_setup(
     scenes_dir.mkdir(parents=True, exist_ok=True)
     scene_path = scenes_dir / f"{SCENE_NAME}.json"
     existing_scene = _load_json(scene_path)
+    existing_mic = {}
+    if isinstance(existing_scene, dict):
+        maybe_mic = existing_scene.get("AuxAudioDevice1")
+        if isinstance(maybe_mic, dict):
+            existing_mic = maybe_mic
+    mic_device_id, mic_name = _chosen_microphone(existing_mic, binds.mic_device_id)
     scene_path.write_text(
         json.dumps(
             _scene_collection(
                 preset,
-                script_paths,
-                binds,
                 capture,
-                show_notifications=show_notifications,
-                show_popup=show_popup,
                 existing=existing_scene,
+                mic_device_id=mic_device_id,
+                sorter_path=sorter_path,
             ),
             indent=4,
         ),
@@ -807,34 +793,19 @@ def apply_setup(
     else:
         remove_obs_windows_startup()
 
-    if show_notifications:
-        install_toast_identity(find_obs_exe(), refresh_shortcut=True)
-    save_ptt_config(binds)
-
-    mic_label = {"open": "always on", "ptt": "off", "off": "muted"}.get(binds.mic_mode, binds.mic_mode)
-    if binds.ptt_enabled:
-        labels = ", ".join(key.label for key in binds.ptt_keys())
-        mic_label = f"push to talk ({labels})"
-    mic_device = binds.mic_device_name or binds.mic_device_id or "Windows default"
-    if binds.mic_mode == "off":
-        mic_summary = "off"
-    else:
-        mic_summary = f"{mic_device} · {mic_label}"
-
     return {
         "profile": PROFILE_NAME,
         "scene": SCENE_NAME,
         "output_dir": str(output_dir),
-        "scripts": copied,
         "backup_dir": str(backup_dir),
         "save_hotkey": binds.save.label,
         "clip_toggle": binds.replay_toggle.label,
         "record_toggle": binds.record_toggle.label if enable_recording else "off",
         "start_hotkey": binds.replay_toggle.label,
-        "ptt": mic_label,
-        "mic": mic_summary,
+        "mic": mic_name,
+        "mic_device_id": mic_device_id,
         "capture": (
-            f"This game (remembers last title, {binds.hook_game.label} to switch)"
+            "This game (pick the window in OBS Game Capture)"
             if capture != "any"
             else "Any fullscreen game"
         ),
@@ -842,14 +813,8 @@ def apply_setup(
         "fps": preset.fps,
         "quality": preset.label,
         "bitrate_kbps": preset.bitrate_kbps,
-        "notifications": show_notifications,
-        "popup": show_popup,
         "recording": enable_recording,
-        "audio": (
-            "game track 1, mic track 2"
-            if binds.mic_mode != "off"
-            else "game track 1 (mic off)"
-        ),
+        "audio": "game track 1, mic track 2",
         "windows_startup": bool(startup_path),
         "windows_startup_path": str(startup_path) if startup_path else "",
     }

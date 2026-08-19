@@ -74,12 +74,28 @@ function Show-WindowsToast([string]$heading, [string]$body) {
 function Show-FormToast([string]$heading, [string]$body) {
     Add-Type -AssemblyName System.Windows.Forms
     Add-Type -AssemblyName System.Drawing
+    if (-not ("ClipKitNoActivateForm" -as [type])) {
+        Add-Type -TypeDefinition @"
+using System;
+using System.Windows.Forms;
+public class ClipKitNoActivateForm : Form {
+    protected override bool ShowWithoutActivation { get { return true; } }
+    protected override CreateParams CreateParams {
+        get {
+            CreateParams cp = base.CreateParams;
+            cp.ExStyle |= 0x08000000; // WS_EX_NOACTIVATE
+            cp.ExStyle |= 0x00000008; // WS_EX_TOPMOST
+            return cp;
+        }
+    }
+}
+"@
+    }
 
     $screen = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
-    $form = New-Object System.Windows.Forms.Form
+    $form = New-Object ClipKitNoActivateForm
     $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
     $form.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
-    $form.TopMost = $true
     $form.ShowInTaskbar = $false
     $form.BackColor = [System.Drawing.Color]::FromArgb(11, 19, 38)
     $form.Width = 420
@@ -114,7 +130,6 @@ function Show-FormToast([string]$heading, [string]$body) {
     $form.Controls.Add($msgLabel)
 
     $form.Show()
-    $form.BringToFront()
     $watch = [System.Diagnostics.Stopwatch]::StartNew()
     while ($watch.ElapsedMilliseconds -lt 2800) {
         [System.Windows.Forms.Application]::DoEvents()

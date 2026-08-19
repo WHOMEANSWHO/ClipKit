@@ -119,7 +119,6 @@ class UserBinds:
     save: Hotkey
     replay_toggle: Hotkey
     record_toggle: Hotkey
-    hook_game: Hotkey
     mic_mode: str = "ptt"  # open, ptt, off
     mic_device_id: str = ""
     mic_device_name: str = ""
@@ -139,7 +138,6 @@ DEFAULT_BINDS = UserBinds(
     save=Hotkey("OBS_KEY_PAGEUP"),
     replay_toggle=Hotkey("OBS_KEY_NUMMINUS"),
     record_toggle=Hotkey("OBS_KEY_NUMPLUS"),
-    hook_game=Hotkey("OBS_KEY_F7"),
     mic_mode="ptt",
     mic_device_id="",
     mic_device_name="",

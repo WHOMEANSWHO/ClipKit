@@ -2,25 +2,15 @@
 
 from __future__ import annotations
 
-import os
 import threading
-import time
 import traceback
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from . import __version__
-from .audio import CaptureDevice, pick_microphone
 from .hardware import Hardware, detect, load_cached_hardware, obs_is_running
-from .health import (
-    clear_status,
-    newest_clip,
-    probe,
-    request_test_clip,
-    reveal_in_explorer,
-    wait_for_save_result,
-)
+from .health import probe, reveal_in_explorer
 from .install_obs import (
     find_obs_exe,
     fresh_install_obs,
@@ -43,7 +33,7 @@ from .presets import (
     all_presets,
     recommend_id,
 )
-from .settings import binds_from_settings, load_settings, save_ptt_config, save_settings, settings_from_app
+from .settings import binds_from_settings, load_settings, save_settings, settings_from_app
 
 BG = "#0b1326"
 PANEL = "#171f33"
@@ -161,16 +151,9 @@ class ClipKitApp(tk.Tk):
         self._fps = tk.IntVar(value=60)
         self._bitrate = tk.IntVar(value=DEFAULT_BITRATE)
         self._just_installed = False
-        self._capture = tk.StringVar(value="hotkey")
-        self._mic_mode = tk.StringVar(value="ptt")
-        self._mic_device = tk.StringVar(value="")
-        self._mic_devices: list[CaptureDevice] = []
-        self._install_sorter = tk.BooleanVar(value=True)
-        self._install_autostart = tk.BooleanVar(value=True)
+        self._capture = tk.StringVar(value="window")
         self._start_with_windows = tk.BooleanVar(value=True)
         self._enable_recording = tk.BooleanVar(value=True)
-        self._show_notifications = tk.BooleanVar(value=True)
-        self._show_popup = tk.BooleanVar(value=True)
         self._status = tk.StringVar(value="Detecting your PC…")
         self._busy = False
         self._chip_groups: list[tuple[dict, tk.Variable]] = []
@@ -518,28 +501,21 @@ class ClipKitApp(tk.Tk):
             choices,
             "Capture",
             self._capture,
-            (("hotkey", "This game"), ("any", "Any fullscreen")),
-            self._sync_hook_bind,
+            (("window", "This game"), ("any", "Any fullscreen")),
+            None,
         )
-        self._chips(
-            choices,
-            "Microphone",
-            self._mic_mode,
-            (("open", "Always on"), ("ptt", "PTT"), ("off", "Mic off")),
-            self._sync_ptt,
-        )
-        self._mic_pick_host = tk.Frame(choices, bg=PANEL)
-        self._mic_pick_host.pack(fill="x")
         tk.Label(
-            self._mic_pick_host,
-            text="Finding microphones…",
+            choices,
+            text="This game: in OBS, click Game Capture and pick the window yourself. Any fullscreen grabs whatever is in front.",
             bg=PANEL,
             fg=MUTED,
-            font=(UI, 9),
-        ).pack(anchor="w", padx=20, pady=(0, 4))
+            font=(MONO, 8),
+            wraplength=520,
+            justify="left",
+        ).pack(anchor="w", padx=20, pady=(0, 8))
         tk.Label(
             choices,
-            text="Game audio on track 1. ClipKit picks your real mic for track 2 — not Windows Default / Chat Mix.",
+            text="Game audio on track 1, mic on track 2. ClipKit picks your microphone. Mute and push-to-talk stay in Windows / Discord.",
             bg=PANEL,
             fg=MUTED,
             font=(MONO, 8),
@@ -547,7 +523,7 @@ class ClipKitApp(tk.Tk):
             justify="left",
         ).pack(anchor="w", padx=20, pady=(0, 16))
 
-        save = self._card(left, "Clips folder", "FiveM → FiveM\\Server name. Other games get their own folder.")
+        save = self._card(left, "Clips folder", "OBS saves here, then the sorter puts FiveM clips in a server folder.")
         path_row = tk.Frame(save, bg=PANEL)
         path_row.pack(fill="x", padx=20, pady=(4, 16))
         self._path_entry = ttk.Entry(path_row, textvariable=self._output, style="Dark.TEntry")
@@ -562,52 +538,14 @@ class ClipKitApp(tk.Tk):
         self.replay_bind = self._bind_row(binds, "Clipping on / off", DEFAULT_BINDS.replay_toggle)
         self.record_bind = self._bind_row(binds, "Recording on / off", DEFAULT_BINDS.record_toggle)
         self._record_row = self.record_bind.master
-        self.hook_block = tk.Frame(binds, bg=PANEL)
-        self.hook_block.pack(fill="x", after=self._record_row)
-        self.hook_bind = self._bind_row(self.hook_block, "Switch game", DEFAULT_BINDS.hook_game)
-        tk.Label(
-            self.hook_block,
-            text="Press this once in-game. ClipKit remembers it, including any FiveM shortcut.",
-            bg=PANEL,
-            fg=MUTED,
-            font=("Segoe UI", 9),
-            wraplength=420,
-            justify="left",
-        ).pack(anchor="w", padx=16, pady=(0, 8))
-        self.ptt_keys = tk.Frame(binds, bg=PANEL)
-        self.ptt_keys.pack(fill="x")
-        ptt_defaults = DEFAULT_BINDS.ptt_keys()
-        self.ptt_bind = self._bind_row(self.ptt_keys, "Talk (hold)", ptt_defaults[0])
-        self.ptt_bind2 = self._bind_row(self.ptt_keys, "Talk (2nd button)", ptt_defaults[1])
-        tk.Label(
-            self.ptt_keys,
-            text="Hold a side mouse button to talk. ClipKit writes this as OBS Mic push-to-talk, same as Settings → Hotkeys.",
-            bg=PANEL,
-            fg=MUTED,
-            font=("Segoe UI", 9),
-            wraplength=420,
-            justify="left",
-        ).pack(anchor="w", padx=16, pady=(0, 12))
 
         options = self._card(right, "Extras", "Leave these on unless you know you want them off.")
-        self._check(options, "Sort clips into game / FiveM server folders", self._install_sorter)
-        self._check(options, "Start replay buffer when OBS opens", self._install_autostart)
         self._check(options, "Start OBS with Windows", self._start_with_windows)
         self._check(
             options,
             "Full recording setup (same quality as clips)",
             self._enable_recording,
             self._sync_record_bind,
-        )
-        self._check(
-            options,
-            "Windows notification when a clip saves (works in fullscreen, ClipKit does not need to stay installed)",
-            self._show_notifications,
-        )
-        self._check(
-            options,
-            "On-screen popup on the main monitor when a clip saves",
-            self._show_popup,
         )
         tk.Frame(options, bg=PANEL, height=10).pack()
 
@@ -643,8 +581,6 @@ class ClipKitApp(tk.Tk):
         )
         self.fresh_btn.pack(anchor="w", padx=20, pady=(0, 16))
 
-        self._sync_ptt()
-        self._sync_hook_bind()
         self._sync_record_bind()
 
     def _make_pill(self, parent: tk.Misc, title: str, value: str, *, accent: bool = False) -> tk.Label:
@@ -660,37 +596,19 @@ class ClipKitApp(tk.Tk):
         value_lbl.pack(anchor="w", padx=12, pady=(2, 8))
         return value_lbl
 
-    def _sync_ptt(self) -> None:
-        if self._mic_mode.get() != "ptt":
-            self.ptt_keys.pack_forget()
-            return
-        if str(self.hook_block.winfo_manager()):
-            self.ptt_keys.pack(fill="x", after=self.hook_block)
-        else:
-            self.ptt_keys.pack(fill="x", after=self._record_row)
-
     def _current_binds(self) -> UserBinds:
+        saved = binds_from_settings(self._saved)
         return UserBinds(
             save=self.save_bind.hotkey,
             replay_toggle=self.replay_bind.hotkey,
             record_toggle=self.record_bind.hotkey,
-            hook_game=self.hook_bind.hotkey,
-            mic_mode=self._mic_mode.get(),
-            mic_device_id=self._mic_device.get().strip(),
-            mic_device_name=self._selected_mic_name(),
-            ptt=[self.ptt_bind.hotkey, self.ptt_bind2.hotkey],
+            mic_device_id=saved.mic_device_id,
+            mic_device_name=saved.mic_device_name,
         )
 
     def _sync_record_bind(self) -> None:
         state = "normal" if self._enable_recording.get() else "disabled"
         self.record_bind.configure(state=state)
-
-    def _sync_hook_bind(self) -> None:
-        if self._capture.get() == "any":
-            self.hook_block.pack_forget()
-        else:
-            self.hook_block.pack(fill="x", after=self._record_row)
-        self._sync_ptt()
 
     def _on_choices_changed(self) -> None:
         if not self._hw:
@@ -768,42 +686,6 @@ class ClipKitApp(tk.Tk):
         self.notes_label.configure(text="\n".join(notes))
         self._sync_preset_copy()
         self._sync_obs_presence(hw.obs_installed, update_status=status_ready)
-        self._refresh_mic_devices(hw.mics)
-
-    def _selected_mic_name(self) -> str:
-        current = self._mic_device.get().strip().lower()
-        for device in self._mic_devices:
-            if device.device_id.lower() == current:
-                return device.name
-        return str(self._saved.get("mic_device_name") or "") if self._saved else ""
-
-    def _refresh_mic_devices(self, devices: list[CaptureDevice] | None) -> None:
-        host = getattr(self, "_mic_pick_host", None)
-        if host is None:
-            return
-        self._mic_devices = list(devices or [])
-        preferred = self._mic_device.get().strip() or str((self._saved or {}).get("mic_device_id") or "")
-        chosen = pick_microphone(self._mic_devices, preferred)
-        if chosen:
-            self._mic_device.set(chosen.device_id)
-        for child in host.winfo_children():
-            child.destroy()
-        self._chip_groups = [
-            (store, variable) for store, variable in self._chip_groups if variable is not self._mic_device
-        ]
-        if not self._mic_devices:
-            tk.Label(
-                host,
-                text="No microphone found. OBS will use Windows Default.",
-                bg=PANEL,
-                fg=AMBER,
-                font=(UI, 9),
-                wraplength=520,
-                justify="left",
-            ).pack(anchor="w", padx=20, pady=(0, 4))
-            return
-        options = [(device.device_id, device.short_name) for device in self._mic_devices]
-        self._chips(host, "Mic input", self._mic_device, options)
 
     def _sync_preset_copy(self) -> None:
         preset = self._presets.get(self._preset_id.get())
@@ -899,59 +781,17 @@ class ClipKitApp(tk.Tk):
                 "Open OBS on the ClipKit profile first (Apply if you have not), then click Test clip.",
             )
             return
-        self._set_busy(True, "Saving a test clip…")
-        threading.Thread(target=self._test_clip_bg, args=(Path(folder),), daemon=True).start()
-
-    def _test_clip_bg(self, folder: Path) -> None:
-        started = time.time() - 1
         try:
-            request_test_clip()
-            result = wait_for_save_result()
+            reveal_in_explorer(Path(folder))
         except OSError as exc:
-            err = str(exc)
-            self.after(
-                0,
-                lambda f=folder, e=err: self._test_clip_done(f, {"ok": False, "path": "", "error": e}, None),
-            )
+            messagebox.showerror("Clips folder", f"Could not open that folder.\n\n{exc}")
             return
-        clip = None
-        if result.get("ok"):
-            for _ in range(20):
-                clip = newest_clip(folder, after=started)
-                if clip is not None:
-                    break
-                time.sleep(0.25)
-            raw = str(result.get("path") or "").strip()
-            if clip is None and raw:
-                candidate = Path(raw)
-                if candidate.is_file():
-                    clip = candidate
-        self.after(0, lambda f=folder, r=result, c=clip: self._test_clip_done(f, r, c))
-
-    def _test_clip_done(self, folder: Path, result: dict, clip: Path | None) -> None:
-        self._set_busy(False)
-        if not result.get("ok"):
-            self._status.set("Test clip did not save.")
-            messagebox.showerror(
-                "Test clip",
-                result.get("error")
-                or "OBS did not save a clip. Apply ClipKit once, keep OBS open, and make sure clipping is on.",
-            )
-            return
-        target = clip if clip is not None else folder
-        try:
-            reveal_in_explorer(target)
-        except OSError:
-            try:
-                os.startfile(os.fsdecode(folder))
-            except OSError as exc:
-                self._status.set("Test clip saved, but the folder would not open.")
-                messagebox.showerror("Clips folder", str(exc))
-                return
-        if clip is not None:
-            self._status.set(f"Test clip saved: {clip.name}")
-        else:
-            self._status.set("Test clip saved. Clips folder opened.")
+        save_label = self.save_bind.hotkey.label
+        self._status.set(f"Clips folder opened. Press {save_label} in OBS to save a clip.")
+        messagebox.showinfo(
+            "Test clip",
+            f"OBS is open. Press {save_label} in OBS to save the replay buffer, then check this folder.",
+        )
 
     def _set_busy(self, busy: bool, message: str | None = None) -> None:
         self._busy = busy
@@ -1044,12 +884,8 @@ class ClipKitApp(tk.Tk):
                 "The installer ran, but obs64.exe was not found. Open OBS from the Start menu once, then run ClipKit again.",
             )
             return
-        self._install_sorter.set(True)
-        self._install_autostart.set(True)
         self._start_with_windows.set(True)
         self._enable_recording.set(True)
-        self._show_notifications.set(True)
-        self._show_popup.set(True)
         self._just_installed = True
         self._set_busy(False)
         self._sync_obs_presence(True, update_status=True)
@@ -1066,15 +902,10 @@ class ClipKitApp(tk.Tk):
                     bitrate=int(self._bitrate.get()),
                     capture=self._capture.get(),
                     binds=self._current_binds(),
-                    install_sorter=self._install_sorter.get(),
-                    install_autostart=self._install_autostart.get(),
                     start_with_windows=self._start_with_windows.get(),
                     enable_recording=self._enable_recording.get(),
-                    show_notifications=self._show_notifications.get(),
-                    show_popup=self._show_popup.get(),
                 )
             )
-            save_ptt_config(self._current_binds())
         except OSError:
             pass
 
@@ -1097,33 +928,22 @@ class ClipKitApp(tk.Tk):
         bitrate = data.get("bitrate")
         if bitrate in allowed_bitrate:
             self._bitrate.set(int(bitrate))
-        if data.get("capture") in {"hotkey", "any"}:
-            self._capture.set(str(data["capture"]))
+        if data.get("capture") == "any":
+            self._capture.set("any")
+        elif data.get("capture") in {"window", "hotkey"}:
+            self._capture.set("window")
         binds = binds_from_settings(data)
-        self._mic_mode.set(binds.mic_mode)
-        if binds.mic_device_id:
-            self._mic_device.set(binds.mic_device_id)
         self.save_bind.set_hotkey(binds.save)
         self.replay_bind.set_hotkey(binds.replay_toggle)
         self.record_bind.set_hotkey(binds.record_toggle)
-        self.hook_bind.set_hotkey(binds.hook_game)
-        ptt = binds.ptt_keys()
-        self.ptt_bind.set_hotkey(ptt[0])
-        self.ptt_bind2.set_hotkey(ptt[1] if len(ptt) > 1 else ptt[0])
         extras = (
-            ("install_sorter", self._install_sorter),
-            ("install_autostart", self._install_autostart),
             ("start_with_windows", self._start_with_windows),
             ("enable_recording", self._enable_recording),
-            ("show_notifications", self._show_notifications),
-            ("show_popup", self._show_popup),
         )
         for key, variable in extras:
             if key in data:
                 variable.set(bool(data[key]))
         self._on_choices_changed()
-        self._sync_ptt()
-        self._sync_hook_bind()
         self._sync_record_bind()
         for store, variable in self._chip_groups:
             self._refresh_chips(store, variable)
@@ -1137,52 +957,39 @@ class ClipKitApp(tk.Tk):
 
         leave_extract_dir()
 
-    def _health_verdict(self, info: dict, *, expect_replay: bool) -> tuple[str, bool]:
+    def _health_verdict(self, info: dict) -> tuple[str, bool]:
         game = str(info.get("game") or "").strip()
         if game:
             hooked = game
         elif self._capture.get() == "any":
             hooked = "any fullscreen game"
         else:
-            hooked = "none yet — press Switch game in-game"
+            hooked = "none yet — pick the window in OBS Game Capture"
         lines = [
             f"OBS: {info['obs']}",
             f"Profile: {info['profile']}",
             f"Replay buffer: {info['replay']}",
-            f"Hooked game: {hooked}",
+            f"Game Capture: {hooked}",
         ]
         ok = bool(info.get("ok"))
         if ok:
             lines.append("")
-            lines.append("Clipping is running on ClipKit.")
+            lines.append("OBS is open on the ClipKit profile.")
         elif info["obs"] != "open":
             lines.append("")
             lines.append("OBS did not stay open. Open OBS yourself — it should be on the ClipKit profile.")
         elif info["profile"] != PROFILE_NAME:
             lines.append("")
             lines.append("OBS opened, but not on the ClipKit profile. Pick Profile → ClipKit.")
-        elif expect_replay and info.get("replay_known") != "on":
-            lines.append("")
-            lines.append(
-                "OBS is on ClipKit, but clipping did not start. Check Tools → Scripts for ClipKit Helper."
-            )
-        elif not expect_replay:
-            lines.append("")
-            lines.append("Replay autostart is off. Press your clipping-on key when you want the buffer.")
         return "\n".join(lines), ok
 
     def _poll_health(self) -> None:
         if not self.winfo_exists():
             return
-        expect = self._health_expect_replay
-        info = probe(expect_replay=expect)
+        info = probe()
         reveal_obs_window()
         self._health_tries += 1
-        known = info.get("replay_known")
-        done = bool(info.get("ok")) or self._health_tries >= 60
-        if expect and known == "off" and info["obs"] == "open":
-            done = True
-        if not done:
+        if not info.get("ok") and self._health_tries < 40:
             self.after(500, self._poll_health)
             return
         result = self._health_apply_result or {}
@@ -1194,8 +1001,7 @@ class ClipKitApp(tk.Tk):
         seconds = int(result.get("clip_seconds") or self._clip_seconds.get())
         length = f"{seconds} seconds" if seconds < 60 else f"{seconds // 60} minutes"
         bitrate = int(result.get("bitrate_kbps") or (preset.bitrate_kbps if preset else self._bitrate.get()))
-        expect = self._health_expect_replay
-        health_text, ok = self._health_verdict(info, expect_replay=expect)
+        health_text, ok = self._health_verdict(info)
         if ok:
             self._status.set(
                 f"OBS is on ClipKit with clipping on. Press {result.get('save_hotkey', 'Save')} to save the last {length}."
@@ -1225,19 +1031,17 @@ class ClipKitApp(tk.Tk):
                     f"Clip length: last {length} at {result.get('fps', self._fps.get())} fps",
                     f"Capture: {result.get('capture', self._capture.get())}",
                     f"Clips save to: {result.get('output_dir', self._output.get())}",
-                    f"Hooked game: {info.get('game') or 'none yet — press Switch game in-game'}",
+                    f"Game Capture: {info.get('game') or 'none yet — pick the window in OBS Game Capture'}",
                     f"Save clip: {result.get('save_hotkey', '')}",
                     f"Start/stop clipping: {result.get('clip_toggle', '')}",
                     f"Start/stop recording: {result.get('record_toggle', '')}",
                     f"Mic: {result.get('mic', '')}",
                     f"Audio: {result.get('audio', 'game + mic')}",
-                    "Windows notification: on" if result.get("notifications") else "Windows notification: off",
-                    "On-screen popup: on" if result.get("popup") else "On-screen popup: off",
                     startup_line,
                     "",
-                    "FiveM: press the switch-game key once in-game. OBS remembers it, including any FiveM shortcut. Run OBS as administrator if the preview stays black or game audio is missing.",
+                    "In OBS, click Game Capture and choose your game window. Run OBS as administrator if the preview stays black or game audio is missing.",
                     "",
-                    "You can delete ClipKit.exe now. Clipping, PTT, folders, and notifications stay in OBS.",
+                    "You can delete ClipKit.exe now. OBS keeps the ClipKit profile.",
                 ]
             ),
         )
@@ -1252,13 +1056,9 @@ class ClipKitApp(tk.Tk):
             result = apply_setup(
                 preset,
                 Path(self._output.get()),
-                install_sorter=self._install_sorter.get(),
-                install_autostart=self._install_autostart.get(),
                 binds=self._current_binds(),
                 capture=self._capture.get(),
                 enable_recording=self._enable_recording.get(),
-                show_notifications=self._show_notifications.get(),
-                show_popup=self._show_popup.get(),
                 start_with_windows=self._start_with_windows.get(),
             )
         except Exception as exc:  # noqa: BLE001
@@ -1266,25 +1066,24 @@ class ClipKitApp(tk.Tk):
             messagebox.showerror("ClipKit could not apply settings", str(exc))
             return
         self._just_installed = False
+        if result.get("mic_device_id"):
+            self._saved = dict(self._saved or {})
+            self._saved["mic_device_id"] = result["mic_device_id"]
+            self._saved["mic_device_name"] = str(result.get("mic") or "")
         self._persist_settings()
-        expect_replay = self._install_autostart.get()
-        if expect_replay:
-            clear_status()
         launched = launch_obs_clipkit()
         self._health_apply_result = result
-        self._health_expect_replay = expect_replay
+        self._health_expect_replay = True
         self._health_tries = 0
         if launched:
-            self._set_busy(True, "Checking OBS… is ClipKit open, and is clipping on?")
+            self._set_busy(True, "Checking OBS… is the ClipKit profile open?")
             self.after(500, self._poll_health)
             return
-        info = probe(expect_replay=expect_replay)
+        info = probe()
         self._show_apply_result(result, info)
 
 
 def run() -> None:
-    from .install_obs import find_obs_exe
-    from .notifications import install_toast_identity
     from .paths import is_frozen, leave_extract_dir
     from .startup import migrate_legacy_obs_startup
     from .windows_app import cleanup_legacy_windows_app
@@ -1293,7 +1092,6 @@ def run() -> None:
     if is_frozen():
         cleanup_legacy_windows_app()
     migrate_legacy_obs_startup()
-    install_toast_identity(find_obs_exe())
     app = ClipKitApp()
     app.mainloop()
     leave_extract_dir()

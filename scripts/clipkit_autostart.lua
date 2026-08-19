@@ -1,7 +1,6 @@
 -- ClipKit helper
 -- Starts Replay Buffer on launch and beeps when a clip or recording saves.
--- Remembers the last hooked game so it comes back without pressing the switch key.
--- Any FiveM shortcut / build is treated as the same game.
+-- Game Capture stays on the window you pick in OBS. ClipKit does not switch it.
 -- The clip sorter shows the main-monitor popup after the file is moved.
 
 local obs = obslua
@@ -10,9 +9,8 @@ local user32 = nil
 local kernel32 = nil
 local start_tries = 0
 local retry_running = false
-local remember_enabled = true
+local remember_enabled = false
 local remember_timer_on = false
-local switch_hotkey_id = obs.OBS_INVALID_HOTKEY_ID
 local last_applied_spec = ""
 local enum_windows_cb = nil
 local enum_state = nil
@@ -200,11 +198,10 @@ local function replay_is_on()
 end
 
 local function current_game()
-    local game = last_from_source and last_from_source() or nil
-    if game == nil and read_last_game then
-        game = read_last_game()
+    if last_from_source then
+        return last_from_source()
     end
-    return game
+    return nil
 end
 
 local function write_replay_status(on)
@@ -668,29 +665,6 @@ last_from_source = function()
 end
 
 function remember_tick()
-    if not remember_enabled or capture_mode_is_any() then
-        write_replay_status(replay_is_on())
-        return
-    end
-    local last = read_last_game()
-    if last == nil then
-        last = last_from_source()
-        if last ~= nil then
-            write_last_game(last)
-        end
-    end
-    if last == nil then
-        write_replay_status(replay_is_on())
-        return
-    end
-    local target = find_target(last)
-    if target ~= nil then
-        if last.family == "fivem" then
-            target.family = "fivem"
-        end
-        write_last_game(target)
-        set_game_capture(target)
-    end
     write_replay_status(replay_is_on())
 end
 
@@ -707,267 +681,6 @@ local function stop_remember()
     if remember_timer_on then
         obs.timer_remove(remember_tick)
         remember_timer_on = false
-    end
-end
-
-------------------------------------------------------------------------
--- Push to talk: poll keys so mouse 4/5 still work in-game
-------------------------------------------------------------------------
-
-local ptt_enabled = false
-local ptt_vks = {}
-local ptt_timer_on = false
-local ptt_talking = false
-local ptt_release_at = 0
-
-local OBS_TO_VK = {
-    OBS_KEY_MOUSE1 = 0x01,
-    OBS_KEY_MOUSE2 = 0x02,
-    OBS_KEY_MOUSE3 = 0x04,
-    OBS_KEY_MOUSE4 = 0x05,
-    OBS_KEY_MOUSE5 = 0x06,
-    OBS_KEY_SPACE = 0x20,
-    OBS_KEY_RETURN = 0x0D,
-    OBS_KEY_TAB = 0x09,
-    OBS_KEY_SHIFT = 0x10,
-    OBS_KEY_CONTROL = 0x11,
-    OBS_KEY_ALT = 0x12,
-    OBS_KEY_CAPSLOCK = 0x14,
-    OBS_KEY_ESCAPE = 0x1B,
-    OBS_KEY_PAGEUP = 0x21,
-    OBS_KEY_PAGEDOWN = 0x22,
-    OBS_KEY_END = 0x23,
-    OBS_KEY_HOME = 0x24,
-    OBS_KEY_LEFT = 0x25,
-    OBS_KEY_UP = 0x26,
-    OBS_KEY_RIGHT = 0x27,
-    OBS_KEY_DOWN = 0x28,
-    OBS_KEY_INSERT = 0x2D,
-    OBS_KEY_DELETE = 0x2E,
-    OBS_KEY_NUMPLUS = 0x6B,
-    OBS_KEY_NUMMINUS = 0x6D,
-    OBS_KEY_NUMMULTIPLY = 0x6A,
-    OBS_KEY_NUMDIVIDE = 0x6F,
-    OBS_KEY_NUMPERIOD = 0x6E,
-    OBS_KEY_NUMENTER = 0x0D,
-}
-
-local function vk_for_obs_key(obs_key)
-    if obs_key == nil or obs_key == "" then
-        return nil
-    end
-    if OBS_TO_VK[obs_key] then
-        return OBS_TO_VK[obs_key]
-    end
-    local letter = obs_key:match("^OBS_KEY_([A-Z])$")
-    if letter then
-        return string.byte(letter)
-    end
-    local digit = obs_key:match("^OBS_KEY_([0-9])$")
-    if digit then
-        return 0x30 + tonumber(digit)
-    end
-    local fkey = obs_key:match("^OBS_KEY_F(%d+)$")
-    if fkey then
-        return 0x70 + tonumber(fkey) - 1
-    end
-    local num = obs_key:match("^OBS_KEY_NUM(%d)$")
-    if num then
-        return 0x60 + tonumber(num)
-    end
-    return nil
-end
-
-local function set_mic_talking(on)
-    local source = obs.obs_get_source_by_name("Mic")
-    if source == nil then
-        return
-    end
-    obs.obs_source_set_muted(source, not on)
-    obs.obs_source_release(source)
-end
-
-local function ptt_file_path()
-    local dir = clipkit_scripts_dir()
-    if dir == nil then
-        return nil
-    end
-    return dir .. "ptt.json"
-end
-
-local function ptt_legacy_path()
-    local appdata = os.getenv("APPDATA")
-    if appdata == nil or appdata == "" then
-        return nil
-    end
-    return appdata .. "\\ClipKit\\ptt.json"
-end
-
-local lua_forced_talk = false
-local last_ptt_raw = ""
-local ptt_reload_n = 0
-
-local function mic_is_muted()
-    local source = obs.obs_get_source_by_name("Mic")
-    if source == nil then
-        return true
-    end
-    local muted = obs.obs_source_muted(source)
-    obs.obs_source_release(source)
-    return muted
-end
-
-local function apply_ptt_keys(raw_keys, enabled)
-    ptt_vks = {}
-    for token in string.gmatch(tostring(raw_keys or ""), "[^,]+") do
-        local vk = vk_for_obs_key(token:gsub("^%s+", ""):gsub("%s+$", ""))
-        if vk ~= nil then
-            ptt_vks[#ptt_vks + 1] = vk
-        end
-    end
-    if enabled == nil then
-        ptt_enabled = true
-    else
-        ptt_enabled = enabled and true or false
-    end
-    if ptt_enabled and #ptt_vks == 0 then
-        ptt_vks = { 0x05, 0x06 }
-    end
-end
-
-local function load_ptt_file()
-    local paths = { ptt_file_path(), ptt_legacy_path() }
-    local raw = nil
-    for i = 1, #paths do
-        local path = paths[i]
-        if path ~= nil then
-            local handle = io.open(path, "r")
-            if handle ~= nil then
-                raw = handle:read("*a") or ""
-                handle:close()
-                break
-            end
-        end
-    end
-    if raw == nil then
-        return false
-    end
-    if raw == last_ptt_raw then
-        return true
-    end
-    last_ptt_raw = raw
-    local enabled = true
-    local flag = raw:match('"enabled"%s*:%s*(%w+)')
-    if flag == "false" then
-        enabled = false
-    end
-    local keys = {}
-    for key in raw:gmatch('"(OBS_KEY_[A-Z0-9_]+)"') do
-        keys[#keys + 1] = key
-    end
-    apply_ptt_keys(table.concat(keys, ","), enabled)
-    return true
-end
-
-local function ptt_key_held()
-    if user32 == nil or not prepare_capture_ffi() then
-        return false
-    end
-    for i = 1, #ptt_vks do
-        if user32.GetAsyncKeyState(ptt_vks[i]) < 0 then
-            return true
-        end
-    end
-    return false
-end
-
-function ptt_tick()
-    ptt_reload_n = ptt_reload_n + 1
-    if ptt_reload_n >= 60 then
-        ptt_reload_n = 0
-        load_ptt_file()
-    end
-    if not ptt_enabled then
-        return
-    end
-    -- OBS Settings owns PTT. This only unmutes if the game ate the hotkey.
-    if ptt_key_held() then
-        if mic_is_muted() then
-            lua_forced_talk = true
-            set_mic_talking(true)
-        end
-        return
-    end
-    if lua_forced_talk then
-        lua_forced_talk = false
-        set_mic_talking(false)
-    end
-end
-
-local function start_ptt()
-    if ptt_timer_on then
-        return
-    end
-    prepare_capture_ffi()
-    obs.timer_add(ptt_tick, 30)
-    ptt_timer_on = true
-    if ptt_enabled then
-        obs.script_log(obs.LOG_INFO, "[ClipKit] Push to talk is on")
-    end
-end
-
-local function stop_ptt()
-    if ptt_timer_on then
-        obs.timer_remove(ptt_tick)
-        ptt_timer_on = false
-    end
-end
-
-local function load_ptt(settings)
-    if load_ptt_file() then
-        return
-    end
-    local raw = ""
-    local enabled = true
-    if settings ~= nil then
-        raw = obs.obs_data_get_string(settings, "ptt_keys") or ""
-        if obs.obs_data_has_user_value(settings, "ptt_enabled") then
-            enabled = obs.obs_data_get_bool(settings, "ptt_enabled")
-        end
-    end
-    apply_ptt_keys(raw, enabled)
-end
-
-local function on_switch_game(pressed)
-    if not pressed or not remember_enabled then
-        return
-    end
-    if not prepare_capture_ffi() then
-        return
-    end
-    local hwnd = user32.GetForegroundWindow()
-    local info = window_info(hwnd)
-    if info == nil then
-        return
-    end
-    write_last_game(info)
-    set_game_capture(info)
-    obs.script_log(obs.LOG_INFO, "[ClipKit] Switch game → " .. info.exe)
-end
-
-local function load_switch_hotkey(settings)
-    if switch_hotkey_id ~= obs.OBS_INVALID_HOTKEY_ID then
-        return
-    end
-    switch_hotkey_id = obs.obs_hotkey_register_frontend(
-        "clipkit.switch_game",
-        "ClipKit: Switch game",
-        on_switch_game
-    )
-    local arr = obs.obs_data_get_array(settings, "switch_game")
-    if arr ~= nil then
-        obs.obs_hotkey_load(switch_hotkey_id, arr)
-        obs.obs_data_array_release(arr)
     end
 end
 
@@ -1054,78 +767,44 @@ function script_description()
     return [[
 <h2>ClipKit Helper</h2>
 <p>Starts Replay Buffer when OBS opens, and beeps when a clip or recording saves.</p>
-<p>Remembers the last game you hooked. FiveM recaptures from any shortcut or build.</p>
-<p>Mic push-to-talk is the normal OBS hotkey. The helper only unmutes if a game ate that hotkey.</p>
-<p>Saves a test clip when ClipKit asks, and reports which game is hooked.</p>
+<p>Game Capture stays on the window you pick in OBS. ClipKit does not switch it.</p>
+<p>ClipKit does not mute, unmute, or bind the microphone. Set that in OBS.</p>
+<p>Saves a test clip when ClipKit asks, and reports which game is captured.</p>
 <p>The clip sorter shows the main-monitor popup after the file is in the game folder.</p>
 ]]
 end
 
-function script_defaults(settings)
-    obs.obs_data_set_default_bool(settings, "ptt_enabled", true)
-    obs.obs_data_set_default_string(settings, "ptt_keys", "OBS_KEY_MOUSE4,OBS_KEY_MOUSE5")
-    obs.obs_data_set_default_bool(settings, "remember_game", true)
+function script_defaults(_settings)
 end
 
 function script_properties()
-    local props = obs.obs_properties_create()
-    obs.obs_properties_add_bool(props, "ptt_enabled", "Push to talk (ClipKit)")
-    obs.obs_properties_add_text(props, "ptt_keys", "PTT keys", obs.OBS_TEXT_DEFAULT)
-    obs.obs_properties_add_bool(props, "remember_game", "Remember last hooked game")
-    return props
+    return obs.obs_properties_create()
 end
 
-function script_update(settings)
-    if obs.obs_data_has_user_value(settings, "remember_game") then
-        remember_enabled = obs.obs_data_get_bool(settings, "remember_game")
-    end
-    load_ptt(settings)
-    if ptt_enabled then
-        start_ptt()
-        set_mic_talking(ptt_talking)
-    end
+function script_update(_settings)
 end
 
-function script_load(settings)
-    if obs.obs_data_has_user_value(settings, "remember_game") then
-        remember_enabled = obs.obs_data_get_bool(settings, "remember_game")
-    else
-        remember_enabled = true
-    end
+function script_load(_settings)
+    remember_enabled = false
     obs.obs_frontend_add_event_callback(on_event)
     disable_desktop_audio()
     show_obs_window()
     keep_hiding_desktop()
     begin_retry()
-    load_ptt(settings)
-    start_ptt()
     start_command()
-    if remember_enabled then
-        load_switch_hotkey(settings)
-        start_remember()
-    end
+    start_remember()
 end
 
-function script_save(settings)
-    if switch_hotkey_id ~= obs.OBS_INVALID_HOTKEY_ID then
-        local arr = obs.obs_hotkey_save(switch_hotkey_id)
-        obs.obs_data_set_array(settings, "switch_game", arr)
-        obs.obs_data_array_release(arr)
-    end
+function script_save(_settings)
 end
 
 function script_unload()
     stop_retry()
     stop_remember()
-    stop_ptt()
     stop_command()
     pcall(function()
         obs.timer_remove(hide_desktop_tick)
     end)
-    if switch_hotkey_id ~= obs.OBS_INVALID_HOTKEY_ID then
-        obs.obs_hotkey_unregister(switch_hotkey_id)
-        switch_hotkey_id = obs.OBS_INVALID_HOTKEY_ID
-    end
     if enum_windows_cb ~= nil then
         enum_windows_cb:free()
         enum_windows_cb = nil

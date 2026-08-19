@@ -94,6 +94,25 @@ def pick_microphone(
     return ranked[0]
 
 
+def resolve_microphone(
+    devices: list[CaptureDevice],
+    *,
+    preferred_id: str = "",
+    existing_id: str = "",
+) -> CaptureDevice | None:
+    """Keep a real mic if it is still plugged in; otherwise pick the best one."""
+    if not devices:
+        return None
+    by_id = {device.device_id.lower(): device for device in devices}
+    wanted = preferred_id.strip().lower()
+    if wanted in by_id and _score(by_id[wanted].name) > 0:
+        return by_id[wanted]
+    existing = by_id.get(existing_id.strip().lower())
+    if existing is not None and _score(existing.name) > 0:
+        return existing
+    return pick_microphone(devices)
+
+
 def list_capture_devices() -> list[CaptureDevice]:
     script = r"""
 $ErrorActionPreference = 'Stop'

@@ -1,9 +1,9 @@
--- OBS Game Clip Sorter v1.1.2
+-- OBS Game Clip Sorter v1.1.4
 -- Automatically sorts replay-buffer clips and recordings into game folders.
 -- Windows 11 only. No extra software is required beyond OBS and PowerShell.
 
 local obs = obslua
-local SCRIPT_VERSION = "1.1.2"
+local SCRIPT_VERSION = "1.1.4"
 
 ------------------------------------------------------------------------
 -- Easy-to-edit built-in game aliases
@@ -63,8 +63,6 @@ local poll_interval_ms = 10000
 local fivem_fallback_server = "Unknown_Server"
 local debug_enabled = false
 local show_advanced_settings = false
-local show_notifications = true
-local show_popup = true
 
 local custom_game_aliases = {}
 local custom_server_aliases = {}
@@ -165,6 +163,21 @@ end
 
 local function lowercase(value)
     return string.lower(trim(value))
+end
+
+local function looks_like_junk_name(value)
+    local lower = lowercase(value)
+    if lower == "" then
+        return false
+    end
+    -- PowerShell dumps <Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com...">
+    -- when detection fails. That must never become a folder name.
+    if lower:find("xmlns", 1, true) or lower:find("<objs", 1, true) or
+        lower:find("objs version", 1, true) or
+        lower:find("schemas.microsoft.com", 1, true) then
+        return true
+    end
+    return false
 end
 
 local function normalize_slashes(path)
@@ -748,6 +761,14 @@ local function clean_fivem_server(title)
     end
 
     local clean = original
+    clean = clean:gsub("[Ff]ive[Mm]_b%d+_GTAProcess%.[Ee][Xx][Ee]", " ")
+    clean = clean:gsub("[Ff]ive[Mm]_b%d+_GTAProcess", " ")
+    clean = clean:gsub("[Ff]ive[Mm]%.[Ee][Xx][Ee]", " ")
+    clean = remove_word_case_insensitive(clean, "GTAProcess")
+    clean = clean:gsub("[Vv]ersion%s*=%s*[%w%.]+", " ")
+    clean = remove_word_case_insensitive(clean, "Objs")
+    clean = remove_word_case_insensitive(clean, "xmlns")
+    clean = clean:gsub("https?://%S+", " ")
     -- Remove the full branding phrase first. Doing this before removing Cfx.re
     -- prevents a leftover leading "by" (for example, "by Arena").
     clean = clean:gsub("[Bb][Yy]%s+[Cc][Ff][Xx]%.[Rr][Ee]", " ")
@@ -764,6 +785,12 @@ local function clean_fivem_server(title)
     clean = trim(clean)
     clean = clean:gsub("^[Bb][Yy]%s+", "")
     clean = trim(clean)
+
+    local roleplay = clean:match("([%a][%w%s%-%']-[Rr]oleplay)")
+    if roleplay then
+        clean = trim(roleplay)
+    end
+
     clean = sanitize_windows_name(clean, "")
 
     local aliased = server_alias(clean) or server_alias(original)
@@ -771,8 +798,11 @@ local function clean_fivem_server(title)
         clean = aliased
     end
 
-    if clean == "" or #clean < 2 then
+    if clean == "" or #clean < 2 or looks_like_junk_name(clean) then
         return sanitize_windows_name(fivem_fallback_server, "Unknown_Server")
+    end
+    if #clean > 40 then
+        clean = trim(clean:sub(1, 40)):gsub("[%. ]+$", "")
     end
     return sanitize_windows_name(clean, "Unknown_Server")
 end
@@ -1004,7 +1034,7 @@ local function inspect_obs_source(source)
     end
 
     -- ClipKit hotkey / any capture must not lock folders to a leftover hooked
-    -- window. Otherwise a Fortnite clip stays in the old FiveM server folder.
+    -- window. Otherwise a Fortnite clip stays in FiveM\Felicity.
     if is_game_capture and (capture_mode == "hotkey" or capture_mode == "any") then
         return nil
     end
@@ -1143,8 +1173,16 @@ local function foreground_process()
         log_debug("Game detection failed: " .. err)
         return nil, nil
     end
+    if looks_like_junk_name(output) then
+        log_debug("Ignored PowerShell junk instead of a window title")
+        return nil, nil
+    end
     local process_name, title = output:match("^([^\t\r\n]+)\t?(.*)$")
-    return trim(process_name), trim(title)
+    process_name, title = trim(process_name), trim(title)
+    if looks_like_junk_name(process_name) or looks_like_junk_name(title) then
+        return nil, nil
+    end
+    return process_name, title
 end
 
 local function detect_game_from_windows()
@@ -1160,15 +1198,23 @@ local function detect_game_from_windows()
     end
 
     if is_fivem(process_name, window_title) then
+        local server = clean_fivem_server(window_title)
+        if looks_like_junk_name(server) then
+            server = sanitize_windows_name(fivem_fallback_server, "Unknown_Server")
+        end
         return {
             game = "FiveM",
-            server = clean_fivem_server(window_title),
+            server = server,
             process = process_name,
             window_title = window_title
         }
     end
+    local game = choose_game_name(process_name, window_title)
+    if looks_like_junk_name(game) or game_looks_generic(game) then
+        return nil
+    end
     return {
-        game = choose_game_name(process_name, window_title),
+        game = game,
         server = nil,
         process = process_name,
         window_title = window_title
@@ -1446,7 +1492,7 @@ local function target_folder_for(base_folder, game, server)
     if game_name == "FiveM" then
         local safe_server = sanitize_windows_name(
             server or fivem_fallback_server, "Unknown_Server")
-        return join_path(join_path(base_folder, "FiveM"), safe_server)
+        return join_path(base_folder, safe_server)
     end
     return join_path(base_folder, game_name)
 end
@@ -1472,30 +1518,7 @@ local function target_details(job, source_path)
 end
 
 local function toast_saved(title, message)
-    if not show_notifications and not show_popup then
-        return
-    end
-    local ok_path, folder = pcall(script_path)
-    if not ok_path or folder == nil or folder == "" then
-        return
-    end
-    local ps1 = folder .. "clipkit_toast.ps1"
-    if not file_exists(ps1) then
-        return
-    end
-    title = tostring(title or "ClipKit"):gsub('"', "'")
-    message = tostring(message or ""):gsub('"', "'")
-    local flags = ""
-    if show_notifications then
-        flags = flags .. " -Toast"
-    end
-    if show_popup then
-        flags = flags .. " -Popup"
-    end
-    local cmd = string.format(
-        'cmd /c start "" /b powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%s" -Title "%s" -Message "%s"%s',
-        ps1, title, message, flags)
-    os.execute(cmd)
+    return
 end
 
 local function display_spaces(value)
@@ -1685,18 +1708,18 @@ local function job_timer()
 end
 
 local function queue_file_job(kind, delay_ms)
-    -- Name the folder from the game in front at save time, so switching from
-    -- FiveM to Fortnite creates vids\Fortnite instead of staying in
-    -- vids\FiveM\Server. If OBS or the desktop is in front, keep the last game.
+    -- Name the folder from OBS Game Capture when it already has a window.
+    -- Only use the foreground window if that is a real game, so Explorer or
+    -- PowerShell junk cannot create folders like "Objs Version=".
+    detect_current_game(false)
     local windows_result = detect_game_from_windows()
-    if windows_result and not game_looks_generic(windows_result.game) then
+    if windows_result and not game_looks_generic(windows_result.game) and
+        not looks_like_junk_name(windows_result.game) then
         cached_game = windows_result.game
         cached_server = windows_result.server
         cached_process = windows_result.process
         cached_title = windows_result.window_title
         last_detection_method = "Windows foreground at save"
-    else
-        detect_current_game(false)
     end
     local folder, source = detected_output_folder()
     if folder == "" then
@@ -1890,10 +1913,9 @@ end
 function script_description()
     return [[
 <h2>OBS Game Clip Sorter</h2>
-<p><b>Version 1.1.2</b></p>
+<p><b>Version 1.1.4</b></p>
 <p>Automatically moves replay-buffer clips and recordings into folders for the current game.</p>
-<p>FiveM files go into a server subfolder, for example <code>FiveM\Server Name</code>. Other games get their own folder, for example <code>Fortnite</code>.</p>
-<p>After a move, you can get a Windows notification (works over fullscreen) and/or an on-screen popup on the main monitor.</p>
+<p>FiveM files go into <code>your clips folder\Server name</code>, for example <code>Felicity Roleplay\Clip_Felicity_Roleplay_19-08-26_21-00-00.mp4</code>. Other games get their own folder, for example <code>Fortnite</code>.</p>
 <p><b>Leave the custom output folder blank to use your OBS save path automatically.</b></p>
 <p>Advanced settings are optional and hidden by default.</p>
 ]]
@@ -1939,10 +1961,6 @@ function script_properties()
     local debug_property = obs.obs_properties_add_bool(properties,
         "debug_enabled", "Debug logging")
     obs.obs_property_set_modified_callback(debug_property, debug_setting_changed)
-    obs.obs_properties_add_bool(properties, "show_notifications",
-        "Windows notification when a clip saves")
-    obs.obs_properties_add_bool(properties, "show_popup",
-        "On-screen popup on the main monitor")
     local advanced_toggle = obs.obs_properties_add_bool(properties,
         "show_advanced_settings", "Show advanced settings")
     obs.obs_property_set_modified_callback(advanced_toggle, advanced_settings_changed)
@@ -1979,8 +1997,6 @@ function script_defaults(settings)
     obs.obs_data_set_default_int(settings, "poll_interval_ms", 10000)
     obs.obs_data_set_default_string(settings, "fivem_fallback_server", "Unknown_Server")
     obs.obs_data_set_default_bool(settings, "debug_enabled", false)
-    obs.obs_data_set_default_bool(settings, "show_notifications", true)
-    obs.obs_data_set_default_bool(settings, "show_popup", true)
     obs.obs_data_set_default_bool(settings, "show_advanced_settings", false)
     obs.obs_data_set_default_string(settings, "game_aliases", "")
     obs.obs_data_set_default_string(settings, "server_aliases", "")
@@ -1994,8 +2010,6 @@ function script_update(settings)
     fivem_fallback_server = sanitize_windows_name(
         obs.obs_data_get_string(settings, "fivem_fallback_server"), "Unknown_Server")
     debug_enabled = obs.obs_data_get_bool(settings, "debug_enabled")
-    show_notifications = obs.obs_data_get_bool(settings, "show_notifications")
-    show_popup = obs.obs_data_get_bool(settings, "show_popup")
     show_advanced_settings = obs.obs_data_get_bool(settings, "show_advanced_settings")
     custom_game_aliases = parse_aliases(obs.obs_data_get_string(settings, "game_aliases"))
     custom_server_aliases = parse_aliases(obs.obs_data_get_string(settings, "server_aliases"))

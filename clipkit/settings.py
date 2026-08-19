@@ -149,10 +149,6 @@ def binds_from_settings(data: dict) -> UserBinds:
             saved.get("record_toggle") if isinstance(saved, dict) else None,
             DEFAULT_BINDS.record_toggle,
         ),
-        hook_game=_hotkey_from_dict(
-            saved.get("hook_game") if isinstance(saved, dict) else None,
-            DEFAULT_BINDS.hook_game,
-        ),
         mic_mode=mic,
         mic_device_id=str(data.get("mic_device_id") or ""),
         mic_device_name=str(data.get("mic_device_name") or ""),
@@ -169,12 +165,8 @@ def settings_from_app(
     bitrate: int,
     capture: str,
     binds: UserBinds,
-    install_sorter: bool,
-    install_autostart: bool,
     start_with_windows: bool,
     enable_recording: bool,
-    show_notifications: bool,
-    show_popup: bool,
 ) -> dict:
     allowed_bitrate = {kbps for kbps, _label in RECORD_BITRATES}
     allowed_seconds = {seconds for seconds, _label in CLIP_LENGTHS}
@@ -184,21 +176,16 @@ def settings_from_app(
         "clip_seconds": clip_seconds if clip_seconds in allowed_seconds else 300,
         "fps": fps if fps in FPS_CHOICES else 60,
         "bitrate": bitrate if bitrate in allowed_bitrate else DEFAULT_BITRATE,
-        "capture": capture if capture in {"hotkey", "any"} else "hotkey",
+        "capture": "any" if capture == "any" else "window",
         "mic_mode": binds.mic_mode,
         "mic_device_id": binds.mic_device_id,
         "mic_device_name": binds.mic_device_name,
-        "install_sorter": install_sorter,
-        "install_autostart": install_autostart,
         "start_with_windows": start_with_windows,
         "enable_recording": enable_recording,
-        "show_notifications": show_notifications,
-        "show_popup": show_popup,
         "binds": {
             "save": _hotkey_to_dict(binds.save),
             "replay_toggle": _hotkey_to_dict(binds.replay_toggle),
             "record_toggle": _hotkey_to_dict(binds.record_toggle),
-            "hook_game": _hotkey_to_dict(binds.hook_game),
             "ptt": [_hotkey_to_dict(key) for key in binds.ptt_keys()[:2]],
         },
     }
