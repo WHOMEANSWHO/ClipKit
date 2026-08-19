@@ -133,6 +133,19 @@ def obs_is_running() -> bool:
         _kernel32.CloseHandle(snap)
 
 
+def wait_until_obs_closed(*, timeout: float = 12.0) -> bool:
+    """Wait until obs64/obs32 are gone so profile files can be written."""
+    import time
+
+    deadline = time.monotonic() + timeout
+    while obs_is_running():
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.2)
+    time.sleep(0.4)
+    return True
+
+
 def _obs_running_tasklist() -> bool:
     hidden = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
     try:

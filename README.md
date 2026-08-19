@@ -38,7 +38,7 @@ Do not download `release/ClipKit.exe` from the repo tree. That copy can sit behi
 1. Download **ClipKit.exe**.
 2. Double-click it. Windows may ask to allow it.
 3. Pick a clips folder, clip length, bitrate, and keys if you want to change them. **Open** next to the path shows that folder.
-4. Close OBS if it is already open (check the tray too).
+4. Click **Apply**. If OBS is open, ClipKit restarts it. FiveM can stay running.
 5. Click **Install OBS and set up**, or **Apply to OBS** if OBS is already installed.
 6. Wait for the health check: OBS should be open on **ClipKit**. If you already picked a game window in OBS, it should name that game.
 7. Click **Test clip** once OBS is open. It opens the clips folder — press the save-clip key in OBS, then check that a file appears.

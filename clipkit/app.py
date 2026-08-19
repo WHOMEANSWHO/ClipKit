@@ -9,9 +9,10 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from . import __version__
-from .hardware import Hardware, detect, load_cached_hardware, obs_is_running
+from .hardware import Hardware, detect, load_cached_hardware, obs_is_running, wait_until_obs_closed
 from .health import probe, reveal_in_explorer
 from .install_obs import (
+    close_obs,
     find_obs_exe,
     fresh_install_obs,
     install_obs,
@@ -358,7 +359,7 @@ class ClipKitApp(tk.Tk):
         self.warn_bar = tk.Frame(self, bg="#3d2a12")
         self.warn_label = tk.Label(
             self.warn_bar,
-            text="OBS is open. Close it (including the tray icon) before you apply.",
+            text="OBS is open. Apply will restart OBS. FiveM and other games can stay running.",
             bg="#3d2a12",
             fg=AMBER,
             font=("Segoe UI Semibold", 9),
@@ -682,7 +683,7 @@ class ClipKitApp(tk.Tk):
         notes = list(hw.notes)
         self._set_obs_warning(hw.obs_running)
         if hw.obs_running:
-            notes.insert(0, "Close OBS completely before applying.")
+            notes.insert(0, "Apply restarts OBS. You can keep FiveM open.")
         self.notes_label.configure(text="\n".join(notes))
         self._sync_preset_copy()
         self._sync_obs_presence(hw.obs_installed, update_status=status_ready)
@@ -810,12 +811,29 @@ class ClipKitApp(tk.Tk):
         if not folder:
             messagebox.showerror("Clips folder", "Pick a folder where clips should be saved.")
             return
-        if self._hw and self._hw.obs_running:
+        if obs_is_running():
+            self._set_busy(True, "Restarting OBS so ClipKit can write settings. FiveM can stay open.")
+            threading.Thread(target=self._restart_obs_then_apply, daemon=True).start()
+            return
+        self._continue_apply()
+
+    def _restart_obs_then_apply(self) -> None:
+        close_obs()
+        closed = wait_until_obs_closed()
+        self.after(0, lambda ok=closed: self._after_obs_restart(ok))
+
+    def _after_obs_restart(self, closed: bool) -> None:
+        if not closed:
+            self._set_busy(False, "OBS is still open.")
             messagebox.showerror(
                 "OBS is still open",
-                "Close OBS Studio completely (check the system tray), then click Apply again.",
+                "ClipKit could not close OBS (check the tray icon). FiveM can stay open — only OBS needs a restart.",
             )
             return
+        self._set_busy(False)
+        self._continue_apply()
+
+    def _continue_apply(self) -> None:
         if not obs_is_installed():
             if not messagebox.askyesno(
                 "Install OBS Studio?",
