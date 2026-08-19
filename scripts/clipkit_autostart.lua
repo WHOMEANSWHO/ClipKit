@@ -63,7 +63,27 @@ local function save_result_file()
     return appdata .. "\\obs-studio\\clipkit-save-result.txt"
 end
 
+local function clipkit_scripts_dir()
+    local ok, folder = pcall(script_path)
+    if ok and folder ~= nil and folder ~= "" then
+        return folder
+    end
+    local appdata = os.getenv("APPDATA")
+    if appdata == nil or appdata == "" then
+        return nil
+    end
+    return appdata .. "\\obs-studio\\clipkit-scripts\\"
+end
+
 local function last_game_path()
+    local dir = clipkit_scripts_dir()
+    if dir == nil then
+        return nil
+    end
+    return dir .. "last-game.json"
+end
+
+local function last_game_legacy_path()
     local appdata = os.getenv("APPDATA")
     if appdata == nil or appdata == "" then
         return nil
@@ -317,16 +337,19 @@ local function ignored_exe(name)
 end
 
 read_last_game = function()
-    local path = last_game_path()
-    if path == nil then
-        return nil
+    local paths = { last_game_path(), last_game_legacy_path() }
+    local raw = ""
+    for i = 1, #paths do
+        local path = paths[i]
+        if path ~= nil then
+            local handle = io.open(path, "r")
+            if handle ~= nil then
+                raw = handle:read("*a") or ""
+                handle:close()
+                break
+            end
+        end
     end
-    local handle = io.open(path, "r")
-    if handle == nil then
-        return nil
-    end
-    local raw = handle:read("*a") or ""
-    handle:close()
     local exe = json_field(raw, "exe")
     if exe == "" then
         return nil
@@ -760,14 +783,19 @@ local function set_mic_talking(on)
     if source == nil then
         return
     end
-    -- OBS source PTT does not see mouse buttons in-game. ClipKit owns mute.
-    pcall(obs.obs_source_enable_push_to_talk, source, false)
-    pcall(obs.obs_source_enable_push_to_mute, source, false)
     obs.obs_source_set_muted(source, not on)
     obs.obs_source_release(source)
 end
 
 local function ptt_file_path()
+    local dir = clipkit_scripts_dir()
+    if dir == nil then
+        return nil
+    end
+    return dir .. "ptt.json"
+end
+
+local function ptt_legacy_path()
     local appdata = os.getenv("APPDATA")
     if appdata == nil or appdata == "" then
         return nil
@@ -775,8 +803,19 @@ local function ptt_file_path()
     return appdata .. "\\ClipKit\\ptt.json"
 end
 
+local lua_forced_talk = false
 local last_ptt_raw = ""
 local ptt_reload_n = 0
+
+local function mic_is_muted()
+    local source = obs.obs_get_source_by_name("Mic")
+    if source == nil then
+        return true
+    end
+    local muted = obs.obs_source_muted(source)
+    obs.obs_source_release(source)
+    return muted
+end
 
 local function apply_ptt_keys(raw_keys, enabled)
     ptt_vks = {}
@@ -797,16 +836,22 @@ local function apply_ptt_keys(raw_keys, enabled)
 end
 
 local function load_ptt_file()
-    local path = ptt_file_path()
-    if path == nil then
+    local paths = { ptt_file_path(), ptt_legacy_path() }
+    local raw = nil
+    for i = 1, #paths do
+        local path = paths[i]
+        if path ~= nil then
+            local handle = io.open(path, "r")
+            if handle ~= nil then
+                raw = handle:read("*a") or ""
+                handle:close()
+                break
+            end
+        end
+    end
+    if raw == nil then
         return false
     end
-    local handle = io.open(path, "r")
-    if handle == nil then
-        return false
-    end
-    local raw = handle:read("*a") or ""
-    handle:close()
     if raw == last_ptt_raw then
         return true
     end
@@ -845,17 +890,16 @@ function ptt_tick()
     if not ptt_enabled then
         return
     end
-    local now = os.clock()
+    -- OBS Settings owns PTT. This only unmutes if the game ate the hotkey.
     if ptt_key_held() then
-        ptt_release_at = now + 0.20
-        if not ptt_talking then
-            ptt_talking = true
+        if mic_is_muted() then
+            lua_forced_talk = true
             set_mic_talking(true)
         end
         return
     end
-    if ptt_talking and now >= ptt_release_at then
-        ptt_talking = false
+    if lua_forced_talk then
+        lua_forced_talk = false
         set_mic_talking(false)
     end
 end
@@ -865,9 +909,6 @@ local function start_ptt()
         return
     end
     prepare_capture_ffi()
-    if ptt_enabled then
-        set_mic_talking(false)
-    end
     obs.timer_add(ptt_tick, 30)
     ptt_timer_on = true
     if ptt_enabled then
@@ -1014,7 +1055,7 @@ function script_description()
 <h2>ClipKit Helper</h2>
 <p>Starts Replay Buffer when OBS opens, and beeps when a clip or recording saves.</p>
 <p>Remembers the last game you hooked. FiveM recaptures from any shortcut or build.</p>
-<p>Push to talk is read from ClipKit, not OBS Mic hotkeys (those fail in-game).</p>
+<p>Mic push-to-talk is the normal OBS hotkey. The helper only unmutes if a game ate that hotkey.</p>
 <p>Saves a test clip when ClipKit asks, and reports which game is hooked.</p>
 <p>The clip sorter shows the main-monitor popup after the file is in the game folder.</p>
 ]]

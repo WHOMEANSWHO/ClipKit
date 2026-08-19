@@ -2,7 +2,7 @@
 
 One-click OBS clipping setup for Windows. ClipKit looks at the PC, installs official OBS Studio if it is missing, and writes a ready-to-use **ClipKit** profile: replay buffer, keys, game audio, mic, and folders for clips.
 
-People in a Discord community can run **one file**. They do not need Python. The first run installs ClipKit as a Windows app (Start menu and Settings → Apps).
+People in a Discord community can run **one file**, then delete it. They do not need Python, and they do not need to keep ClipKit installed. After Apply, OBS does the clipping.
 
 ## What you get
 
@@ -13,7 +13,7 @@ People in a Discord community can run **one file**. They do not need Python. The
 - Desktop / Discord audio left out
 - Clips sorted by game. FiveM goes into `FiveM\Server name`. Other games get their own folder, for example `Fortnite`
 - Files named like `Clip_Server_Name_18-08-26_23-59-12.mp4`
-- Windows notification and/or an on-screen popup when a clip or recording saves. After Apply, ClipKit does not need to stay installed for those notifications.
+- Windows notification and/or an on-screen popup when a clip or recording saves (OBS shows these; ClipKit does not need to stay)
 - **Test clip** saves the buffer and opens the clips folder so you know it works
 - **Open** next to the clips path shows that folder
 - Health check names the hooked game, not only whether OBS and the replay buffer are on
@@ -38,14 +38,13 @@ Do not download `release/ClipKit.exe` from the repo tree. That copy can sit behi
 ## How to use it
 
 1. Download **ClipKit.exe**.
-2. Double-click it. Windows may ask to allow it — ClipKit then installs itself under your user account.
-3. Open it from the **Start menu** next time. Uninstall from **Settings → Apps**.
-4. Pick a clips folder, clip length, bitrate, and keys if you want to change them. ClipKit remembers these next time. **Open** next to the path shows that folder.
-5. Close OBS if it is already open (check the tray too).
-6. Click **Install OBS and set up**, or **Apply to OBS** if OBS is already installed.
-7. Wait for the health check: OBS should be open on **ClipKit**, with the replay buffer on, and it should name the hooked game if you have already captured one.
-8. Click **Test clip** once OBS is open. ClipKit saves the buffer and opens the clips folder so you know it works before you play.
-9. Play. Press the save-clip key after something happens.
+2. Double-click it. Windows may ask to allow it.
+3. Pick a clips folder, clip length, bitrate, and keys if you want to change them. **Open** next to the path shows that folder.
+4. Close OBS if it is already open (check the tray too).
+5. Click **Install OBS and set up**, or **Apply to OBS** if OBS is already installed.
+6. Wait for the health check: OBS should be open on **ClipKit**, with the replay buffer on, and it should name the hooked game if you have already captured one.
+7. Click **Test clip** once OBS is open. ClipKit saves the buffer and opens the clips folder so you know it works before you play.
+8. Delete **ClipKit.exe**. You do not need it installed. Play, and press the save-clip key after something happens.
 
 Windows SmartScreen may appear because the app is not signed. **More info → Run anyway**.
 
@@ -86,8 +85,8 @@ python build.py
 
 ## Notes
 
-- ClipKit installs for your user to `%LOCALAPPDATA%\Programs\ClipKit`. Uninstall from **Settings → Apps**. After Apply, clip notifications still work without ClipKit staying installed.
-- Push to talk is handled by ClipKit, not OBS Mic hotkeys. Leave OBS Mic push-to-talk off.
+- ClipKit is a setup tool only. After Apply you can delete `ClipKit.exe`. Clipping, PTT, folders, and notifications live in OBS.
+- Push to talk is OBS Mic push-to-talk in Settings → Hotkeys. ClipKit fills those binds for you.
 - OBS must be fully closed while ClipKit applies settings.
 - ClipKit searches common install folders, the registry, shortcuts, and other drives for OBS before it installs a new copy.
 - A backup of `user.ini` is stored in `%APPDATA%\obs-studio\clipkit-backups\`.

@@ -16,7 +16,7 @@ from .audio import list_capture_devices, pick_microphone
 from .notifications import install_toast_identity
 from .paths import scripts_dir as repo_scripts_dir
 from .presets import Preset
-from .settings import load_last_game, save_ptt_config
+from .settings import load_last_game, migrate_obs_sidecars, save_ptt_config
 from .startup import install_obs_windows_startup, remove_obs_windows_startup
 
 PROFILE_NAME = "ClipKit"
@@ -474,7 +474,8 @@ def _scene_collection(
             "Mic",
             mic_uuid,
             "wasapi_input_capture",
-            push_to_talk=False,
+            push_to_talk=binds.ptt_enabled,
+            ptt_hotkeys=binds.ptt_keys() if binds.ptt_enabled else None,
             muted=not mic_on or binds.ptt_enabled,
             mixers=TRACK_MIC if mic_on else 0,
             filters=mic_filters,
@@ -743,6 +744,7 @@ def apply_setup(
 
     installed_scripts_dir = config_dir / "clipkit-scripts"
     installed_scripts_dir.mkdir(parents=True, exist_ok=True)
+    migrate_obs_sidecars()
     source_scripts = repo_scripts_dir()
     script_paths: list[Path] = []
     copied = []

@@ -581,16 +581,7 @@ class ClipKitApp(tk.Tk):
         self.ptt_bind2 = self._bind_row(self.ptt_keys, "Talk (2nd button)", ptt_defaults[1])
         tk.Label(
             self.ptt_keys,
-            text="Hold a side mouse button to talk. ClipKit reads the button even in-game.",
-            bg=PANEL,
-            fg=MUTED,
-            font=("Segoe UI", 9),
-            wraplength=420,
-            justify="left",
-        ).pack(anchor="w", padx=16, pady=(0, 4))
-        tk.Label(
-            self.ptt_keys,
-            text="Leave OBS Mic push-to-talk off. ClipKit reads the buttons itself, including in-game.",
+            text="Hold a side mouse button to talk. ClipKit writes this as OBS Mic push-to-talk, same as Settings → Hotkeys.",
             bg=PANEL,
             fg=MUTED,
             font=("Segoe UI", 9),
@@ -1244,7 +1235,9 @@ class ClipKitApp(tk.Tk):
                     "On-screen popup: on" if result.get("popup") else "On-screen popup: off",
                     startup_line,
                     "",
-                    "FiveM: press the switch-game key once. ClipKit remembers it for next time, even if you use a different FiveM shortcut. Run OBS as administrator if the preview stays black or game audio is missing.",
+                    "FiveM: press the switch-game key once in-game. OBS remembers it, including any FiveM shortcut. Run OBS as administrator if the preview stays black or game audio is missing.",
+                    "",
+                    "You can delete ClipKit.exe now. Clipping, PTT, folders, and notifications stay in OBS.",
                 ]
             ),
         )
@@ -1293,16 +1286,12 @@ def run() -> None:
     from .install_obs import find_obs_exe
     from .notifications import install_toast_identity
     from .paths import is_frozen, leave_extract_dir
-    from .startup import install_clipkit_launcher_shortcuts, migrate_legacy_obs_startup
-    from .windows_app import ensure_windows_app
+    from .startup import migrate_legacy_obs_startup
+    from .windows_app import cleanup_legacy_windows_app
 
     leave_extract_dir()
     if is_frozen():
-        if not ensure_windows_app():
-            leave_extract_dir()
-            return
-    else:
-        install_clipkit_launcher_shortcuts()
+        cleanup_legacy_windows_app()
     migrate_legacy_obs_startup()
     install_toast_identity(find_obs_exe())
     app = ClipKitApp()

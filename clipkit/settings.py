@@ -13,12 +13,20 @@ def settings_path() -> Path:
     return Path.home() / "AppData" / "Roaming" / "ClipKit" / "settings.json"
 
 
+def obs_scripts_dir() -> Path:
+    return Path.home() / "AppData" / "Roaming" / "obs-studio" / "clipkit-scripts"
+
+
+def legacy_clipkit_dir() -> Path:
+    return Path.home() / "AppData" / "Roaming" / "ClipKit"
+
+
 def last_game_path() -> Path:
-    return Path.home() / "AppData" / "Roaming" / "ClipKit" / "last-game.json"
+    return obs_scripts_dir() / "last-game.json"
 
 
 def ptt_config_path() -> Path:
-    return Path.home() / "AppData" / "Roaming" / "ClipKit" / "ptt.json"
+    return obs_scripts_dir() / "ptt.json"
 
 
 def save_ptt_config(binds: UserBinds) -> None:
@@ -36,25 +44,42 @@ def save_ptt_config(binds: UserBinds) -> None:
     )
 
 
+def migrate_obs_sidecars() -> None:
+    """Copy last-game / PTT files out of the old ClipKit AppData folder into OBS."""
+    dest_dir = obs_scripts_dir()
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    legacy = legacy_clipkit_dir()
+    for name in ("last-game.json", "ptt.json"):
+        dest = dest_dir / name
+        src = legacy / name
+        if dest.is_file() or not src.is_file():
+            continue
+        try:
+            dest.write_bytes(src.read_bytes())
+        except OSError:
+            continue
+
+
 def load_last_game() -> dict:
-    path = last_game_path()
-    if not path.is_file():
-        return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    if not isinstance(data, dict):
-        return {}
-    exe = str(data.get("exe") or "").strip()
-    if not exe:
-        return {}
-    return {
-        "exe": exe,
-        "class": str(data.get("class") or "").strip(),
-        "title": str(data.get("title") or "").strip(),
-        "family": str(data.get("family") or "").strip(),
-    }
+    for path in (last_game_path(), legacy_clipkit_dir() / "last-game.json"):
+        if not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        exe = str(data.get("exe") or "").strip()
+        if not exe:
+            continue
+        return {
+            "exe": exe,
+            "class": str(data.get("class") or "").strip(),
+            "title": str(data.get("title") or "").strip(),
+            "family": str(data.get("family") or "").strip(),
+        }
+    return {}
 
 
 def _hotkey_to_dict(key: Hotkey) -> dict:

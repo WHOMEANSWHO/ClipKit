@@ -250,6 +250,13 @@ def ensure_windows_app() -> bool:
     return False
 
 
+def cleanup_legacy_windows_app() -> None:
+    """ClipKit is a one-shot setup. Remove leftover Start menu / Apps copies."""
+    if running_from_install():
+        return
+    uninstall_windows_app(quiet=True)
+
+
 def uninstall_windows_app(*, quiet: bool = False) -> int:
     if not quiet:
         result = ctypes_yes_no(
