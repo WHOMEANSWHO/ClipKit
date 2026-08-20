@@ -51,17 +51,40 @@ function Show-MedalPopup([string]$heading) {
     if (-not ("ClipKitNoActivateForm" -as [type])) {
         Add-Type -TypeDefinition @"
 using System;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
+
 public class ClipKitNoActivateForm : Form {
+    const int WS_EX_NOACTIVATE = 0x08000000;
+    const int WS_EX_TOPMOST = 0x00000008;
+    const int WS_EX_TOOLWINDOW = 0x00000080;
+    const int WS_EX_TRANSPARENT = 0x00000020;
+    const int WS_EX_LAYERED = 0x00080000;
+    const uint SWP_NOSIZE = 0x0001;
+    const uint SWP_NOMOVE = 0x0002;
+    const uint SWP_NOACTIVATE = 0x0010;
+    const uint SWP_SHOWWINDOW = 0x0040;
+    static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
+
+    [DllImport("user32.dll")]
+    static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter,
+        int X, int Y, int cx, int cy, uint uFlags);
+
     protected override bool ShowWithoutActivation { get { return true; } }
+
     protected override CreateParams CreateParams {
         get {
             CreateParams cp = base.CreateParams;
-            cp.ExStyle |= 0x08000000;
-            cp.ExStyle |= 0x00000008;
-            cp.ExStyle |= 0x00000080;
+            cp.ExStyle |= WS_EX_NOACTIVATE | WS_EX_TOPMOST | WS_EX_TOOLWINDOW
+                | WS_EX_TRANSPARENT | WS_EX_LAYERED;
             return cp;
         }
+    }
+
+    public void ShowPassive() {
+        Show();
+        SetWindowPos(Handle, HWND_TOPMOST, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
     }
 }
 "@
@@ -72,7 +95,8 @@ public class ClipKitNoActivateForm : Form {
     $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
     $form.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
     $form.ShowInTaskbar = $false
-    $form.TopMost = $true
+    $form.TopMost = $false
+    $form.Opacity = 0.92
     $form.BackColor = [System.Drawing.Color]::FromArgb(18, 18, 18)
     $form.Width = 280
     $form.Height = 72
@@ -94,9 +118,9 @@ public class ClipKitNoActivateForm : Form {
     $titleLabel.Top = 22
     $form.Controls.Add($titleLabel)
 
-    $form.Show()
+    $form.ShowPassive()
     $watch = [System.Diagnostics.Stopwatch]::StartNew()
-    while ($watch.ElapsedMilliseconds -lt 2500) {
+    while ($watch.ElapsedMilliseconds -lt 2200) {
         [System.Windows.Forms.Application]::DoEvents()
         Start-Sleep -Milliseconds 40
     }
@@ -108,6 +132,6 @@ if ($Toast) {
     try { Show-WindowsToast $Title $Message } catch { }
 }
 
-if ($Popup -or -not $Toast) {
+if ($Popup) {
     Show-MedalPopup $Title
 }

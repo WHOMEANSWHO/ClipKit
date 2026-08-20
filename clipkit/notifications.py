@@ -6,6 +6,7 @@ import subprocess
 import winreg
 from pathlib import Path
 
+from .paths import icon_file
 from .startup import create_shortcut, start_menu_dir
 
 AUMID = "ClipKit.Clips"
@@ -119,23 +120,41 @@ public static class ShortcutAumid {
             pass
 
 
+def _visible_toast_shortcut_dirs() -> list[Path]:
+    home = Path.home()
+    return [
+        start_menu_dir(),
+        start_menu_dir() / "Startup",
+        home / "Desktop",
+        home / "OneDrive" / "Desktop",
+        Path(r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs"),
+    ]
+
+
+def remove_obs_toast_shortcut() -> None:
+    """Remove the old Start Menu 'ClipKit Clips' shortcut that used the OBS icon."""
+    for folder in _visible_toast_shortcut_dirs():
+        path = folder / TOAST_SHORTCUT
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            continue
+
+
 def install_toast_identity(obs_exe: Path | None, *, refresh_shortcut: bool = False) -> None:
-    """Register clip toasts against OBS (or PowerShell), so ClipKit can be uninstalled."""
-    target = Path(obs_exe) if obs_exe and Path(obs_exe).is_file() else Path(
-        r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
-    )
-    if not target.is_file():
-        register_toast_app()
+    """Register clip toasts in the registry. Do not create or rename an OBS shortcut."""
+    del obs_exe, refresh_shortcut
+    register_toast_app(icon=icon_file())
+    remove_obs_toast_shortcut()
+    powershell = Path(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe")
+    if not powershell.is_file():
         return
-    register_toast_app(icon=target)
-    link = start_menu_dir() / TOAST_SHORTCUT
-    if link.is_file() and not refresh_shortcut:
-        return
+    hidden = Path.home() / "AppData" / "Roaming" / "ClipKit" / TOAST_SHORTCUT
     created = create_shortcut(
-        link,
-        target,
-        working_directory=target.parent,
-        icon=target,
+        hidden,
+        powershell,
+        working_directory=powershell.parent,
+        icon=icon_file() or powershell,
         description="ClipKit clip saved notifications",
     )
     if created is not None:

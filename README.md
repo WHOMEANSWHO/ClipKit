@@ -65,6 +65,8 @@ Use **borderless / windowed fullscreen** if you can. In OBS, click **Game Captur
 
 FiveM clips land in `YourClipsFolder\Server name`, named like `Clip_Server_Name_19-08-26_21-00-00.mp4`. Recordings use `Recording_` instead of `Clip_`. Other games land in `YourClipsFolder\Game name`.
 
+If you clip with **Medal** instead of OBS, click **Set up Medal sorting**. ClipKit watches Medal’s capture folder (on this PC, `D:\vids\medal`), makes a folder for each FiveM server or other game, and renames clips to `Arena Clip 20-08-26 16-08-00.mp4`. The watcher starts with Windows; you can delete ClipKit.exe afterwards.
+
 If the OBS preview is black or game audio is missing, run OBS as administrator.
 
 ## Build from source

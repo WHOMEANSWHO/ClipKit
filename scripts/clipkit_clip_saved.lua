@@ -1,6 +1,6 @@
--- ClipKit Clip Saved v1.0
+-- ClipKit Clip Saved v1.0.1
 -- Medal-style popup when a clip or recording saves.
--- ClipKit copies this into OBS. After Apply, ClipKit.exe is not needed.
+-- Click-through and no-activate so it never steals the game.
 
 local obs = obslua
 local ffi = nil
@@ -102,7 +102,7 @@ local function start_hidden(application, command_line)
         nil,
         nil,
         0,
-        0x08000000,
+        0x08000200,
         nil,
         nil,
         startup,
@@ -147,7 +147,7 @@ local function on_event(event)
 end
 
 function script_description()
-    return "ClipKit Clip Saved\n\nMedal-style popup when you save a clip or stop a recording. Installed by ClipKit."
+    return "ClipKit Clip Saved\n\nShows CLIP SAVED without taking mouse, keyboard, or focus. Installed by ClipKit."
 end
 
 function script_load(settings)

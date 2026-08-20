@@ -23,6 +23,7 @@ from .install_obs import (
     reveal_obs_window,
 )
 from .keys import DEFAULT_BINDS, Hotkey, UserBinds, from_tk, mouse_button_held
+from .medal import disable_medal_sorter, install_medal_sorter
 from .obs import PROFILE_NAME, apply_setup, default_output_dir
 from .paths import icon_file, mark_file
 from .presets import (
@@ -160,6 +161,7 @@ class ClipKitApp(tk.Tk):
         self._mic_by_label: dict = {}
         self._start_with_windows = tk.BooleanVar(value=True)
         self._enable_recording = tk.BooleanVar(value=True)
+        self._sort_medal = tk.BooleanVar(value=False)
         self._status = tk.StringVar(value="Detecting your PC…")
         self._busy = False
         self._chip_groups: list[tuple[dict, tk.Variable]] = []
@@ -568,15 +570,45 @@ class ClipKitApp(tk.Tk):
             justify="left",
         ).pack(anchor="w", padx=20, pady=(0, 16))
 
-        save = self._card(left, "Clips folder", "OBS saves here. ClipKit adds the sorter and a Clip saved popup.")
+        save = self._card(
+            left,
+            "Clips folder",
+            "Medal clips in D:\\vids\\medal get a folder per server or game, then rename to Name Clip date time.",
+        )
         path_row = tk.Frame(save, bg=PANEL)
-        path_row.pack(fill="x", padx=20, pady=(4, 16))
+        path_row.pack(fill="x", padx=20, pady=(4, 8))
         self._path_entry = ttk.Entry(path_row, textvariable=self._output, style="Dark.TEntry")
         self._path_entry.pack(side="left", fill="x", expand=True, ipady=6)
         ttk.Button(path_row, text="Open", style="Ghost.TButton", command=self._open_clips_folder).pack(
             side="left", padx=(8, 0)
         )
         ttk.Button(path_row, text="Browse", style="Ghost.TButton", command=self._browse).pack(side="left", padx=(8, 0))
+        tk.Label(
+            save,
+            text="If you clip with Medal, each clip is renamed into a server or game folder: Arena Clip 20-08-26 16-08-00.mp4",
+            bg=PANEL,
+            fg=MUTED,
+            font=(MONO, 8),
+            wraplength=520,
+            justify="left",
+        ).pack(anchor="w", padx=20, pady=(0, 8))
+        self.medal_btn = tk.Button(
+            save,
+            text="Set up Medal sorting",
+            command=self.setup_medal_sorting,
+            bg=RAISED,
+            fg=TEXT,
+            activebackground=BRIGHT,
+            activeforeground=PRIMARY,
+            disabledforeground=MUTED,
+            relief="flat",
+            bd=0,
+            padx=16,
+            pady=10,
+            font=(UI, 10, "bold"),
+            cursor="hand2",
+        )
+        self.medal_btn.pack(anchor="w", padx=20, pady=(0, 16))
 
         binds = self._card(right, "Keybinds", "Click a keycap, then press the key or mouse button.")
         self.save_bind = self._bind_row(binds, "Save clip", DEFAULT_BINDS.save)
@@ -596,6 +628,11 @@ class ClipKitApp(tk.Tk):
             "Full recording setup (same quality as clips)",
             self._enable_recording,
             self._sync_record_bind,
+        )
+        self._check(
+            options,
+            "Sort Medal clips by FiveM server (off unless you turn it on)",
+            self._sort_medal,
         )
         tk.Frame(options, bg=PANEL, height=10).pack()
 
@@ -887,6 +924,54 @@ class ClipKitApp(tk.Tk):
         except OSError as exc:
             messagebox.showerror("Clips folder", f"Could not open that folder.\n\n{exc}")
 
+    def setup_medal_sorting(self) -> None:
+        if self._busy:
+            return
+        folder = self._output.get().strip()
+        if not folder:
+            messagebox.showerror("Clips folder", "Pick a folder where sorted Medal clips should go.")
+            return
+        self._sort_medal.set(True)
+        self._set_busy(True, "Setting up Medal clip sorting…")
+        threading.Thread(target=self._install_medal_sorter, daemon=True).start()
+
+    def _install_medal_sorter(self) -> None:
+        try:
+            result = install_medal_sorter(Path(self._output.get().strip()))
+        except Exception as exc:  # noqa: BLE001
+            self.after(0, lambda: self._medal_setup_failed(exc))
+            return
+        self.after(0, lambda: self._medal_setup_done(result))
+
+    def _medal_setup_failed(self, exc: Exception) -> None:
+        self._set_busy(False, "Medal sorting was not set up.")
+        traceback.print_exc()
+        messagebox.showerror("Medal sorting", str(exc))
+
+    def _medal_setup_done(self, result: dict) -> None:
+        self._persist_settings()
+        self._set_busy(False, "Medal clips will be renamed into server or game folders.")
+        watch = result.get("watch_existing") or result.get("watch") or []
+        watch_line = ", ".join(str(path) for path in watch) if watch else r"D:\vids\medal"
+        started = "on" if result.get("started") else "not running yet — it starts with Windows"
+        dest = result.get("output_dir", watch_line)
+        messagebox.showinfo(
+            "Medal sorting is on",
+            "\n".join(
+                [
+                    "Clip with Medal as usual. ClipKit makes a folder for each FiveM server or other game,",
+                    "then renames the clip to: Server Clip date time.mp4",
+                    "",
+                    f"Watching: {watch_line}",
+                    f"Example: {dest}\\Arena\\Arena Clip 20-08-26 16-08-00.mp4",
+                    f"Sorter: {started}",
+                    "Starts with Windows: yes" if result.get("startup") else "Starts with Windows: could not create the shortcut",
+                    "",
+                    "You can delete ClipKit.exe. The sorter stays in AppData and runs in the background.",
+                ]
+            ),
+        )
+
     def test_clip(self) -> None:
         if self._busy:
             return
@@ -919,6 +1004,8 @@ class ClipKitApp(tk.Tk):
             self.test_btn.configure(state="disabled" if busy else "normal")
         if getattr(self, "fresh_btn", None):
             self.fresh_btn.configure(state="disabled" if busy else "normal")
+        if getattr(self, "medal_btn", None):
+            self.medal_btn.configure(state="disabled" if busy else "normal")
         if message:
             self._status.set(message)
 
@@ -1013,6 +1100,7 @@ class ClipKitApp(tk.Tk):
                     binds=self._current_binds(),
                     start_with_windows=self._start_with_windows.get(),
                     enable_recording=self._enable_recording.get(),
+                    sort_medal=self._sort_medal.get(),
                 )
             )
         except OSError:
@@ -1052,6 +1140,7 @@ class ClipKitApp(tk.Tk):
         extras = (
             ("start_with_windows", self._start_with_windows),
             ("enable_recording", self._enable_recording),
+            ("sort_medal", self._sort_medal),
         )
         for key, variable in extras:
             if key in data:
@@ -1155,6 +1244,11 @@ class ClipKitApp(tk.Tk):
                     startup_line,
                     "Clip sorter: on",
                     "Clip saved popup: on",
+                    (
+                        "Medal sorting: on"
+                        if result.get("medal") and not result["medal"].get("error")
+                        else "Medal sorting: off"
+                    ),
                     "",
                     "In OBS, click Game Capture and choose your game window. Run OBS as administrator if the preview stays black or game audio is missing.",
                     "",
@@ -1179,6 +1273,15 @@ class ClipKitApp(tk.Tk):
                 enable_recording=self._enable_recording.get(),
                 start_with_windows=self._start_with_windows.get(),
             )
+            if self._sort_medal.get():
+                try:
+                    result["medal"] = install_medal_sorter(Path(self._output.get()))
+                except Exception:  # noqa: BLE001
+                    traceback.print_exc()
+                    result["medal"] = {"error": True}
+            else:
+                disable_medal_sorter()
+                result["medal"] = None
         except Exception as exc:  # noqa: BLE001
             self._set_busy(False)
             traceback.print_exc()
