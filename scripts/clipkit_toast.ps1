@@ -5,7 +5,28 @@ param(
     [switch]$Popup
 )
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
+$logPath = Join-Path $PSScriptRoot "clip-saved.log"
+$lockPath = Join-Path $PSScriptRoot "clip-saved.lock"
+
+if (Test-Path -LiteralPath $lockPath) {
+    try {
+        $age = (Get-Date) - (Get-Item -LiteralPath $lockPath).LastWriteTime
+        if ($age.TotalSeconds -lt 2) {
+            exit 0
+        }
+    } catch { }
+}
+try {
+    Set-Content -LiteralPath $lockPath -Value (Get-Date -Format "o") -Encoding UTF8
+} catch { }
+
+function Write-ClipLog([string]$text) {
+    try {
+        $line = "[{0}] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $text
+        Add-Content -LiteralPath $logPath -Value $line -Encoding UTF8
+    } catch { }
+}
 
 function Xml-Escape([string]$text) {
     if ($null -eq $text) { return "" }
@@ -40,16 +61,18 @@ function Show-WindowsToast([string]$heading, [string]$body) {
     foreach ($id in $ids) {
         try {
             [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($id).Show($toast)
-            return
+            Write-ClipLog ("Toast shown via " + $id)
+            return $true
         } catch { }
     }
+    return $false
 }
 
 function Show-MedalPopup([string]$heading) {
     Add-Type -AssemblyName System.Windows.Forms
     Add-Type -AssemblyName System.Drawing
     if (-not ("ClipKitNoActivateForm" -as [type])) {
-        Add-Type -TypeDefinition @"
+        $code = @"
 using System;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
@@ -59,7 +82,6 @@ public class ClipKitNoActivateForm : Form {
     const int WS_EX_TOPMOST = 0x00000008;
     const int WS_EX_TOOLWINDOW = 0x00000080;
     const int WS_EX_TRANSPARENT = 0x00000020;
-    const int WS_EX_LAYERED = 0x00080000;
     const uint SWP_NOSIZE = 0x0001;
     const uint SWP_NOMOVE = 0x0002;
     const uint SWP_NOACTIVATE = 0x0010;
@@ -75,8 +97,7 @@ public class ClipKitNoActivateForm : Form {
     protected override CreateParams CreateParams {
         get {
             CreateParams cp = base.CreateParams;
-            cp.ExStyle |= WS_EX_NOACTIVATE | WS_EX_TOPMOST | WS_EX_TOOLWINDOW
-                | WS_EX_TRANSPARENT | WS_EX_LAYERED;
+            cp.ExStyle |= WS_EX_NOACTIVATE | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT;
             return cp;
         }
     }
@@ -88,6 +109,11 @@ public class ClipKitNoActivateForm : Form {
     }
 }
 "@
+        $refs = @(
+            ([System.Windows.Forms.Form].Assembly.Location),
+            "System.dll"
+        )
+        Add-Type -TypeDefinition $code -ReferencedAssemblies $refs -ErrorAction Stop
     }
 
     $screen = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
@@ -95,8 +121,7 @@ public class ClipKitNoActivateForm : Form {
     $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
     $form.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
     $form.ShowInTaskbar = $false
-    $form.TopMost = $false
-    $form.Opacity = 0.92
+    $form.TopMost = $true
     $form.BackColor = [System.Drawing.Color]::FromArgb(18, 18, 18)
     $form.Width = 280
     $form.Height = 72
@@ -126,12 +151,29 @@ public class ClipKitNoActivateForm : Form {
     }
     $form.Close()
     $form.Dispose()
+    Write-ClipLog ("Popup shown: " + $heading)
 }
 
-if ($Toast) {
-    try { Show-WindowsToast $Title $Message } catch { }
+$didPopup = $false
+$didToast = $false
+if ($Popup -or -not $Toast) {
+    try {
+        Show-MedalPopup $Title
+        $didPopup = $true
+    } catch {
+        Write-ClipLog ("Popup failed: " + $_.Exception.Message)
+    }
 }
 
-if ($Popup) {
-    Show-MedalPopup $Title
+if ($Toast -or -not $didPopup) {
+    try {
+        $didToast = Show-WindowsToast $Title $Message
+    } catch {
+        Write-ClipLog ("Toast failed: " + $_.Exception.Message)
+    }
+}
+
+if (-not $didPopup -and -not $didToast) {
+    Write-ClipLog "No clip-saved notice could be shown"
+    exit 1
 }

@@ -1,6 +1,5 @@
--- ClipKit Clip Saved v1.0.1
+-- ClipKit Clip Saved v1.0.3
 -- Medal-style popup when a clip or recording saves.
--- Click-through and no-activate so it never steals the game.
 
 local obs = obslua
 local ffi = nil
@@ -8,16 +7,43 @@ local kernel32 = nil
 local runner_ready = false
 local last_shown_ms = 0
 
-local function scripts_dir()
-    local ok, folder = pcall(script_path)
-    if ok and folder ~= nil and folder ~= "" then
-        return folder
-    end
+local function log_file_path()
     local appdata = os.getenv("APPDATA")
     if appdata == nil or appdata == "" then
         return nil
     end
-    return appdata .. "\\obs-studio\\clipkit-scripts\\"
+    return appdata .. "\\obs-studio\\clipkit-scripts\\clip-saved.log"
+end
+
+local function file_log(message)
+    local path = log_file_path()
+    if path == nil then
+        return
+    end
+    local handle = io.open(path, "a")
+    if handle == nil then
+        return
+    end
+    handle:write(os.date("%Y-%m-%d %H:%M:%S") .. " " .. tostring(message) .. "\n")
+    handle:close()
+    pcall(function()
+        obs.script_log(obs.LOG_INFO, "[ClipKit Clip Saved] " .. tostring(message))
+    end)
+end
+
+local function scripts_dir()
+    local appdata = os.getenv("APPDATA")
+    if appdata ~= nil and appdata ~= "" then
+        return appdata .. "\\obs-studio\\clipkit-scripts\\"
+    end
+    local ok, path = pcall(script_path)
+    if ok and path ~= nil and path ~= "" then
+        local dir = tostring(path):match("^(.*[/\\])")
+        if dir ~= nil then
+            return dir
+        end
+    end
+    return nil
 end
 
 local function toast_script()
@@ -31,6 +57,7 @@ end
 local function prepare_runner()
     local loaded, ffi_module = pcall(require, "ffi")
     if not loaded or ffi_module == nil then
+        file_log("ffi is not available")
         return false
     end
     ffi = ffi_module
@@ -73,12 +100,14 @@ local function prepare_runner()
             const char *currentDirectory, STARTUPINFOA *startupInfo,
             PROCESS_INFORMATION *processInformation);
         BOOL CloseHandle(HANDLE object);
+        DWORD GetLastError();
     ]])
     if not ok then
-        -- Script reload can hit "redefinition" in a shared LuaJIT state.
+        -- Sorter may already have declared these. Keep going.
     end
     local lib_ok, library = pcall(ffi.load, "kernel32")
     if not lib_ok or library == nil then
+        file_log("kernel32 failed to load")
         return false
     end
     kernel32 = library
@@ -87,12 +116,11 @@ end
 
 local function start_hidden(application, command_line)
     if not runner_ready then
+        file_log("hidden runner is not ready")
         return false
     end
     local startup = ffi.new("STARTUPINFOA")
     startup.cb = ffi.sizeof(startup)
-    startup.dwFlags = 0x00000001
-    startup.wShowWindow = 0
     local process = ffi.new("PROCESS_INFORMATION")
     local mutable_command = ffi.new("char[?]", #command_line + 1)
     ffi.copy(mutable_command, command_line)
@@ -102,13 +130,18 @@ local function start_hidden(application, command_line)
         nil,
         nil,
         0,
-        0x08000200,
+        0x08000000,
         nil,
         nil,
         startup,
         process
     )
     if created == 0 then
+        local err = 0
+        pcall(function()
+            err = tonumber(kernel32.GetLastError()) or 0
+        end)
+        file_log("CreateProcess failed, Windows error " .. tostring(err))
         return false
     end
     kernel32.CloseHandle(process.hThread)
@@ -128,14 +161,24 @@ local function show_saved(title)
     last_shown_ms = t
     local ps1 = toast_script()
     if ps1 == nil then
+        file_log("toast script path is missing")
         return
     end
+    local check = io.open(ps1, "r")
+    if check == nil then
+        file_log("toast script not found: " .. ps1)
+        return
+    end
+    check:close()
     local system_root = os.getenv("SystemRoot") or "C:\\Windows"
     local powershell = system_root .. "\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
-    local command = '"' .. powershell .. '" -NoLogo -NoProfile -NonInteractive ' ..
-        '-WindowStyle Hidden -ExecutionPolicy Bypass -File "' .. ps1 ..
+    local command = '"' .. powershell .. '" -NoLogo -NoProfile ' ..
+        '-ExecutionPolicy Bypass -File "' .. ps1 ..
         '" -Popup -Title "' .. title .. '"'
-    start_hidden(powershell, command)
+    file_log("showing " .. title .. " via " .. ps1)
+    if not start_hidden(powershell, command) then
+        file_log("failed to start powershell")
+    end
 end
 
 local function on_event(event)
@@ -152,6 +195,7 @@ end
 
 function script_load(settings)
     runner_ready = prepare_runner()
+    file_log("loaded, runner_ready=" .. tostring(runner_ready))
     obs.obs_frontend_add_event_callback(on_event)
 end
 

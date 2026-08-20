@@ -1,9 +1,9 @@
--- OBS Game Clip Sorter v1.1.4
+-- OBS Game Clip Sorter v1.1.5
 -- Automatically sorts replay-buffer clips and recordings into game folders.
 -- Windows 11 only. No extra software is required beyond OBS and PowerShell.
 
 local obs = obslua
-local SCRIPT_VERSION = "1.1.4"
+local SCRIPT_VERSION = "1.1.5"
 
 ------------------------------------------------------------------------
 -- Easy-to-edit built-in game aliases
@@ -1728,14 +1728,47 @@ local function queue_file_job(kind, delay_ms)
 end
 
 ------------------------------------------------------------------------
+-- Clip saved popup
+------------------------------------------------------------------------
+local function show_clip_saved_popup(title)
+    if ffi == nil or kernel32 == nil then
+        return
+    end
+    local appdata = os.getenv("APPDATA")
+    if appdata == nil or appdata == "" then
+        return
+    end
+    local ps1 = appdata .. "\\obs-studio\\clipkit-scripts\\clipkit_toast.ps1"
+    local powershell = (os.getenv("SystemRoot") or "C:\\Windows") ..
+        "\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+    local command = '"' .. powershell ..
+        '" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "' ..
+        ps1 .. '" -Popup -Title "' .. tostring(title) .. '"'
+    local startup = ffi.new("STARTUPINFOA")
+    startup.cb = ffi.sizeof(startup)
+    local process = ffi.new("PROCESS_INFORMATION")
+    local mutable_command = ffi.new("char[?]", #command + 1)
+    ffi.copy(mutable_command, command)
+    local created = kernel32.CreateProcessA(
+        powershell, mutable_command, nil, nil, 0,
+        0x08000000, nil, nil, startup, process)
+    if created ~= 0 then
+        kernel32.CloseHandle(process.hThread)
+        kernel32.CloseHandle(process.hProcess)
+    end
+end
+
+------------------------------------------------------------------------
 -- OBS events
 ------------------------------------------------------------------------
 local function frontend_event(event)
     if event == obs.OBS_FRONTEND_EVENT_REPLAY_BUFFER_SAVED then
         log_debug("OBS event: replay buffer saved")
+        show_clip_saved_popup("Clip saved")
         queue_file_job("Clip", clip_delay_ms)
     elseif event == obs.OBS_FRONTEND_EVENT_RECORDING_STOPPED then
         log_debug("OBS event: recording stopped")
+        show_clip_saved_popup("Recording saved")
         queue_file_job("Recording", recording_delay_ms)
         recording_active = false
     elseif event == obs.OBS_FRONTEND_EVENT_REPLAY_BUFFER_STARTED then
