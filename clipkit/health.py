@@ -56,7 +56,7 @@ def _label_from_obs_window(window: str) -> str:
 
 
 def hooked_game_label() -> str:
-    """Name from OBS Game Capture, or empty if nothing is selected yet."""
+    """Name from OBS Game Capture, or empty if nothing is hooked yet."""
     settings = load_settings()
     if str(settings.get("capture") or "") == "any":
         return "any fullscreen game"

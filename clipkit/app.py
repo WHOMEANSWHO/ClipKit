@@ -534,7 +534,7 @@ class ClipKitApp(tk.Tk):
         )
         tk.Label(
             choices,
-            text="This game: in OBS, click Game Capture and pick the window yourself. Any fullscreen grabs whatever is in front.",
+            text="This game follows whatever you tab into. You do not open OBS to switch. Discord and browsers are ignored. Any fullscreen grabs whatever is fullscreen.",
             bg=PANEL,
             fg=MUTED,
             font=(MONO, 8),
@@ -1167,7 +1167,7 @@ class ClipKitApp(tk.Tk):
         elif self._capture.get() == "any":
             hooked = "any fullscreen game"
         else:
-            hooked = "none yet — pick the window in OBS Game Capture"
+            hooked = "will follow the game in front"
         lines = [
             f"OBS: {info['obs']}",
             f"Profile: {info['profile']}",
@@ -1234,7 +1234,7 @@ class ClipKitApp(tk.Tk):
                     f"Clip length: last {length} at {result.get('fps', self._fps.get())} fps",
                     f"Capture: {result.get('capture', self._capture.get())}",
                     f"Clips save to: {result.get('output_dir', self._output.get())}",
-                    f"Game Capture: {info.get('game') or 'none yet — pick the window in OBS Game Capture'}",
+                    f"Game Capture: {info.get('game') or 'follows the game in front'}",
                     f"Save clip: {result.get('save_hotkey', '')}",
                     f"Start/stop clipping: {result.get('clip_toggle', '')}",
                     f"Start/stop recording: {result.get('record_toggle', '')}",
@@ -1250,7 +1250,7 @@ class ClipKitApp(tk.Tk):
                         else "Medal sorting: off"
                     ),
                     "",
-                    "In OBS, click Game Capture and choose your game window. Run OBS as administrator if the preview stays black or game audio is missing.",
+                    "Tab into a game — Game Capture follows it. Run OBS as administrator if the preview stays black or game audio is missing.",
                     "",
                     "You can delete ClipKit.exe now. OBS keeps the ClipKit profile.",
                 ]

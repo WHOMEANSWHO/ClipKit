@@ -15,7 +15,7 @@ People in a Discord community can run **one file**, then delete it. They do not 
 - A **Clip saved** popup (Medal-style) when you save a clip. ClipKit only installs that script; OBS runs it.
 - **Test clip** opens that folder so you can press Save in OBS and confirm a file appears
 - **Open** next to the clips path shows that folder
-- Health check confirms OBS is open on **ClipKit**, and names the Game Capture window if you already picked one
+- Health check confirms OBS is open on **ClipKit**, and names the game Game Capture is following
 - OBS opened as a normal window (not hidden in the tray)
 - Optional start with Windows, with clipping already on
 
@@ -40,7 +40,7 @@ Do not download `release/ClipKit.exe` from the repo tree. That copy can sit behi
 2. Double-click it. Windows may ask to allow it.
 3. Pick a clips folder, clip length, bitrate, and keys if you want to change them. **Open** next to the path shows that folder.
 4. Click **Apply**. ClipKit installs OBS if needed, waits until OBS is fully open, closes it, writes the ClipKit setup, then opens OBS again. FiveM can stay running.
-5. Wait for the health check: OBS should be open on **ClipKit**. If you already picked a game window in OBS, it should name that game.
+5. Wait for the health check: OBS should be open on **ClipKit**. Tab into a game and Game Capture follows it.
 6. Click **Test clip** once OBS is open. It opens the clips folder — press the save-clip key in OBS, then check that a file appears.
 7. Delete **ClipKit.exe**. You do not need it installed. Play, and press the save-clip key after something happens.
 
@@ -61,7 +61,7 @@ Any of these can be rebound in ClipKit. Microphone is Always on, Push to talk, o
 
 ## Games
 
-Use **borderless / windowed fullscreen** if you can. In OBS, click **Game Capture**, set Mode to **Capture specific window**, and pick your game.
+Use **borderless / windowed fullscreen** if you can. Tab into FiveM, Fortnite, or another game — Game Capture follows it. You do not need to pick a window in OBS. Discord and browsers are ignored, so tabbing out keeps the last game.
 
 FiveM clips land in `YourClipsFolder\Server name`, named like `Clip_Server_Name_19-08-26_21-00-00.mp4`. Recordings use `Recording_` instead of `Clip_`. Other games land in `YourClipsFolder\Game name`.
 

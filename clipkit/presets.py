@@ -24,7 +24,7 @@ RECORD_BITRATES = (
 )
 DEFAULT_BITRATE = 14000
 CAPTURE_CHOICES = (
-    ("window", "This game — pick the window in OBS"),
+    ("window", "This game — follows whatever you tab into"),
     ("any", "Any fullscreen game"),
 )
 MIC_CHOICES = (

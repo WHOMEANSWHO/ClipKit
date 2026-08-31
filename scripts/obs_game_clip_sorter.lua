@@ -1,9 +1,9 @@
--- OBS Game Clip Sorter v1.1.5
+-- OBS Game Clip Sorter v1.1.7
 -- Automatically sorts replay-buffer clips and recordings into game folders.
 -- Windows 11 only. No extra software is required beyond OBS and PowerShell.
 
 local obs = obslua
-local SCRIPT_VERSION = "1.1.5"
+local SCRIPT_VERSION = "1.1.7"
 
 ------------------------------------------------------------------------
 -- Easy-to-edit built-in game aliases
@@ -98,8 +98,13 @@ local recording_active = false
 local ffi = nil
 local kernel32 = nil
 local shell32 = nil
+local user32 = nil
 local hidden_runner_available = false
 local hidden_runner_error_logged = false
+local hook_timer_running = false
+local last_hooked_exe = ""
+local hook_enum_cb = nil
+local hook_enum_state = nil
 
 local VIDEO_EXTENSIONS = {
     ["mp4"] = true,
@@ -129,7 +134,23 @@ local IGNORED_PROCESSES = {
     ["discord"] = true,
     ["chrome"] = true,
     ["msedge"] = true,
-    ["firefox"] = true
+    ["firefox"] = true,
+    ["brave"] = true,
+    ["opera"] = true,
+    ["steam"] = true,
+    ["steamwebhelper"] = true,
+    ["epicgameslauncher"] = true,
+    ["epicwebhelper"] = true,
+    ["easyanticheatlauncher"] = true,
+    ["clipkit"] = true,
+    ["cursor"] = true,
+    ["code"] = true,
+    ["devenv"] = true,
+    ["spotify"] = true,
+    ["notepad"] = true,
+    ["windowsterminal"] = true,
+    ["nvidia overlay"] = true,
+    ["nvidia share"] = true
 }
 
 ------------------------------------------------------------------------
@@ -1048,15 +1069,10 @@ local function inspect_obs_source(source)
     local base_score = is_game_capture and 100 or (is_window_capture and 80 or 20)
 
     if is_fivem(process_name, combined) then
-        local server = nil
-        if window_title ~= "" then
-            local cleaned = clean_fivem_server(window_title)
-            if cleaned ~= sanitize_windows_name(fivem_fallback_server, "Unknown_Server") then
-                server = cleaned
-            end
-        end
+        -- OBS stores the window title from when the source was picked.
+        -- That string stays "Felicity Roleplay" after you join another server.
         return {
-            game = "FiveM", server = server, source_name = name,
+            game = "FiveM", server = nil, source_name = name,
             source_id = id, process = process_name, window_title = window_title,
             score = base_score + 100
         }
@@ -1221,6 +1237,81 @@ local function detect_game_from_windows()
     }
 end
 
+local function is_unknown_server(value)
+    local name = lowercase(sanitize_windows_name(value or "", ""))
+    return name == "" or name == "unknown_server" or name == "unknown server"
+end
+
+local function detect_live_fivem_server()
+    local script = table.concat({
+        "$ErrorActionPreference='SilentlyContinue';",
+        "Get-Process | Where-Object {",
+        "  $_.MainWindowTitle -and ($_.ProcessName -match 'fivem|GTAProcess')",
+        "} | ForEach-Object {",
+        "  $title = ($_.MainWindowTitle -replace \"`t|`r|`n\",' ');",
+        "  Write-Output ($_.ProcessName + [char]9 + $title)",
+        "}"
+    }, " ")
+    local output, err = run_powershell(script)
+    if err or output == nil or trim(output) == "" then
+        return nil
+    end
+    if looks_like_junk_name(output) then
+        return nil
+    end
+
+    local best = nil
+    for line in (output .. "\n"):gmatch("(.-)\r?\n") do
+        local process_name, title = line:match("^([^\t\r\n]+)\t?(.*)$")
+        process_name, title = trim(process_name), trim(title)
+        if process_name ~= "" and title ~= "" and not looks_like_junk_name(title) and
+            is_fivem(process_name, title) then
+            local server = clean_fivem_server(title)
+            if not is_unknown_server(server) then
+                best = {
+                    game = "FiveM",
+                    server = server,
+                    process = process_name,
+                    window_title = title
+                }
+                if lowercase(server):find("roleplay", 1, true) then
+                    return best
+                end
+            elseif best == nil then
+                best = {
+                    game = "FiveM",
+                    server = sanitize_windows_name(fivem_fallback_server, "Unknown_Server"),
+                    process = process_name,
+                    window_title = title
+                }
+            end
+        end
+    end
+    return best
+end
+
+local function apply_live_fivem_server()
+    local live = detect_live_fivem_server()
+    if live == nil then
+        cached_server = sanitize_windows_name(fivem_fallback_server, "Unknown_Server")
+        last_detection_method = "FiveM live windows (none)"
+        log_debug("FiveM is running in OBS, but no live FiveM window title was found")
+        return
+    end
+    cached_game = "FiveM"
+    cached_process = live.process
+    cached_title = live.window_title
+    log_debug("FiveM live window title: " .. tostring(live.window_title))
+    if not is_unknown_server(live.server) then
+        cached_server = live.server
+        last_detection_method = "FiveM live window title"
+        return
+    end
+    -- Generic titles like "FiveM by Cfx.re" must not keep Felicity from OBS.
+    cached_server = sanitize_windows_name(fivem_fallback_server, "Unknown_Server")
+    last_detection_method = "FiveM live window title (no server in title)"
+end
+
 local function log_detected_result()
     if cached_game == "FiveM" then
         log_info("Detected: FiveM / " ..
@@ -1286,35 +1377,18 @@ local function detect_current_game(force_log, force_windows_when_unclear)
         if trim(obs_result.process) ~= "" then
             cached_process = obs_result.process
         end
-        if trim(obs_result.window_title) ~= "" then
-            cached_title = obs_result.window_title
-        end
 
         if cached_game == "FiveM" then
-            local server = obs_result.server
-            if (server == nil or server == "") and cached_server and
-                cached_server ~= "Unknown_Server" then
-                server = cached_server
-            end
-
-            -- OBS can identify FiveM from a source name without exposing the
-            -- server title. Only then use the hidden Windows fallback.
-            if server == nil or server == "" then
-                last_windows_fallback_needed = true
-                local windows_result = detect_game_from_windows()
-                if windows_result and windows_result.game == "FiveM" then
-                    server = windows_result.server
-                    cached_process = windows_result.process
-                    cached_title = windows_result.window_title
-                end
-            end
-            cached_server = sanitize_windows_name(
-                server or fivem_fallback_server, "Unknown_Server")
+            last_windows_fallback_needed = true
+            apply_live_fivem_server()
+            last_detection_method = "OBS scene/source + " .. last_detection_method
         else
+            if trim(obs_result.window_title) ~= "" then
+                cached_title = obs_result.window_title
+            end
             cached_server = nil
+            last_detection_method = "OBS scene/source"
         end
-
-        last_detection_method = "OBS scene/source"
         log_debug("OBS source detected " .. cached_game .. " from " ..
             tostring(last_obs_source_name) .. " (" .. tostring(last_obs_source_id) .. ")")
         if force_log then
@@ -1328,10 +1402,15 @@ local function detect_current_game(force_log, force_windows_when_unclear)
     local windows_result = detect_game_from_windows()
     if windows_result then
         cached_game = windows_result.game
-        cached_server = windows_result.server
         cached_process = windows_result.process
         cached_title = windows_result.window_title
-        last_detection_method = "hidden Windows fallback"
+        if windows_result.game == "FiveM" then
+            apply_live_fivem_server()
+            last_detection_method = "hidden Windows fallback + " .. last_detection_method
+        else
+            cached_server = nil
+            last_detection_method = "hidden Windows fallback"
+        end
         log_debug("Windows fallback detected " .. cached_game ..
             " (process: " .. cached_process .. ")")
         if force_log then
@@ -1352,6 +1431,254 @@ local function detect_current_game(force_log, force_windows_when_unclear)
         log_detected_result()
     end
     return cached_game ~= "Unknown_Game"
+end
+
+------------------------------------------------------------------------
+-- Follow the foreground game so capture switches without opening OBS
+------------------------------------------------------------------------
+local function exe_stem(name)
+    return lowercase(tostring(name or "")):gsub("%.exe$", "")
+end
+
+local function hook_ignored_exe(name)
+    return IGNORED_PROCESSES[exe_stem(name)] == true
+end
+
+local function fivem_hook_rank(name)
+    local stem = exe_stem(name)
+    if stem:find("dump", 1, true) or stem:find("crash", 1, true) or
+        stem:find("chrome", 1, true) or stem:find("ros", 1, true) or
+        stem:find("steamchild", 1, true) or stem:find("launcher", 1, true) then
+        return 0
+    end
+    if stem:find("gtaprocess", 1, true) then
+        return 3
+    end
+    if stem == "fivem" then
+        return 1
+    end
+    if stem:find("fivem", 1, true) then
+        return 0
+    end
+    return -1
+end
+
+local function prepare_game_hook_ffi()
+    if user32 ~= nil and kernel32 ~= nil and ffi ~= nil then
+        return true
+    end
+    if ffi == nil or kernel32 == nil then
+        return false
+    end
+    pcall(ffi.cdef, [[
+        typedef void *HWND;
+        typedef intptr_t LPARAM;
+        typedef wchar_t WCHAR;
+        typedef BOOL (*WNDENUMPROC)(HWND, LPARAM);
+
+        HWND GetForegroundWindow();
+        BOOL IsWindowVisible(HWND hwnd);
+        int GetWindowTextW(HWND hwnd, WCHAR *text, int max);
+        int GetClassNameW(HWND hwnd, WCHAR *text, int max);
+        DWORD GetWindowThreadProcessId(HWND hwnd, DWORD *pid);
+        BOOL EnumWindows(WNDENUMPROC callback, LPARAM lparam);
+        HANDLE OpenProcess(DWORD access, BOOL inherit, DWORD pid);
+        BOOL QueryFullProcessImageNameW(HANDLE process, DWORD flags,
+            WCHAR *name, DWORD *size);
+        int WideCharToMultiByte(unsigned int codePage, DWORD flags,
+            const WCHAR *wide, int wideCount, char *out, int outCount,
+            const char *def, BOOL *used);
+    ]])
+    local ok, library = pcall(ffi.load, "user32")
+    if not ok or library == nil then
+        return false
+    end
+    user32 = library
+    return true
+end
+
+local function from_wide(buf)
+    if ffi == nil or kernel32 == nil or buf == nil then
+        return ""
+    end
+    local n = kernel32.WideCharToMultiByte(65001, 0, buf, -1, nil, 0, nil, nil)
+    if n <= 1 then
+        return ""
+    end
+    local out = ffi.new("char[?]", n)
+    kernel32.WideCharToMultiByte(65001, 0, buf, -1, out, n, nil, nil)
+    return ffi.string(out)
+end
+
+local function exe_from_pid(pid)
+    if pid == nil or pid == 0 or kernel32 == nil then
+        return ""
+    end
+    local handle = kernel32.OpenProcess(0x1000, 0, pid)
+    if handle == nil or handle == ffi.cast("HANDLE", 0) then
+        return ""
+    end
+    local size = ffi.new("DWORD[1]", 260)
+    local buf = ffi.new("WCHAR[?]", 260)
+    local ok = kernel32.QueryFullProcessImageNameW(handle, 0, buf, size)
+    kernel32.CloseHandle(handle)
+    if ok == 0 then
+        return ""
+    end
+    local path = from_wide(buf)
+    return path:match("([^\\/]+)$") or path
+end
+
+local function hook_window_info(hwnd)
+    if hwnd == nil or hwnd == ffi.cast("HWND", 0) then
+        return nil
+    end
+    if user32.IsWindowVisible(hwnd) == 0 then
+        return nil
+    end
+    local pid = ffi.new("DWORD[1]")
+    user32.GetWindowThreadProcessId(hwnd, pid)
+    local exe = exe_from_pid(pid[0])
+    if exe == "" or hook_ignored_exe(exe) then
+        return nil
+    end
+    local title_buf = ffi.new("WCHAR[?]", 512)
+    local class_buf = ffi.new("WCHAR[?]", 256)
+    user32.GetWindowTextW(hwnd, title_buf, 512)
+    user32.GetClassNameW(hwnd, class_buf, 256)
+    local title = from_wide(title_buf)
+    local class_name = from_wide(class_buf)
+    if title == "" and class_name == "" then
+        return nil
+    end
+    return {
+        exe = exe,
+        title = title,
+        class = class_name,
+        family = is_fivem(exe, title) and "fivem" or exe_stem(exe),
+        rank = fivem_hook_rank(exe)
+    }
+end
+
+local function foreground_hook_window()
+    if not prepare_game_hook_ffi() then
+        return nil
+    end
+    return hook_window_info(user32.GetForegroundWindow())
+end
+
+local function best_fivem_hook_window()
+    if not prepare_game_hook_ffi() then
+        return nil
+    end
+    if hook_enum_cb == nil then
+        hook_enum_cb = ffi.cast("WNDENUMPROC", function(hwnd, _lparam)
+            local info = hook_window_info(hwnd)
+            if info ~= nil and hook_enum_state ~= nil and info.family == "fivem" then
+                local current = hook_enum_state.best
+                if current == nil or (info.rank or 0) > (current.rank or 0) then
+                    hook_enum_state.best = info
+                end
+            end
+            return true
+        end)
+    end
+    hook_enum_state = { best = nil }
+    user32.EnumWindows(hook_enum_cb, 0)
+    local best = hook_enum_state.best
+    hook_enum_state = nil
+    return best
+end
+
+local function capture_mode_is_any()
+    local source = obs.obs_get_source_by_name("Game Capture")
+    if source == nil then
+        return false
+    end
+    local settings = obs.obs_source_get_settings(source)
+    local mode = ""
+    if settings ~= nil then
+        mode = lowercase(obs.obs_data_get_string(settings, "capture_mode") or "")
+        obs.obs_data_release(settings)
+    end
+    obs.obs_source_release(source)
+    return mode == "any"
+end
+
+local function current_hooked_exe()
+    local source = obs.obs_get_source_by_name("Game Capture")
+    if source == nil then
+        return ""
+    end
+    local settings = obs.obs_source_get_settings(source)
+    local spec = ""
+    if settings ~= nil then
+        spec = obs.obs_data_get_string(settings, "window") or ""
+        obs.obs_data_release(settings)
+    end
+    obs.obs_source_release(source)
+    local exe = spec:match("([^:]+)$") or ""
+    return exe_stem(exe)
+end
+
+local function window_hook_spec(title, class_name, exe)
+    local function token(value)
+        return tostring(value or ""):gsub(":", " ")
+    end
+    return token(title) .. ":" .. token(class_name) .. ":" .. token(exe)
+end
+
+local function set_game_capture_window(game)
+    if game == nil or game.exe == nil or game.exe == "" then
+        return
+    end
+    local spec = window_hook_spec(game.title, game.class, game.exe)
+    local source = obs.obs_get_source_by_name("Game Capture")
+    if source == nil then
+        return
+    end
+    local settings = obs.obs_data_create()
+    obs.obs_data_set_string(settings, "capture_mode", "window")
+    obs.obs_data_set_string(settings, "window", spec)
+    obs.obs_data_set_int(settings, "priority", 2)
+    obs.obs_data_set_bool(settings, "capture_audio", true)
+    obs.obs_source_update(source, settings)
+    obs.obs_data_release(settings)
+    obs.obs_source_release(source)
+    last_hooked_exe = exe_stem(game.exe)
+    log_info("Game Capture now follows " .. game.exe)
+end
+
+local function follow_foreground_game()
+    if unloading or capture_mode_is_any() then
+        return
+    end
+    local foreground = foreground_hook_window()
+    local target = foreground
+    if foreground ~= nil and foreground.family == "fivem" then
+        target = best_fivem_hook_window() or foreground
+    elseif foreground == nil then
+        return
+    end
+    if target == nil or hook_ignored_exe(target.exe) then
+        return
+    end
+    local wanted = exe_stem(target.exe)
+    if wanted == "" then
+        return
+    end
+    if wanted == last_hooked_exe or wanted == current_hooked_exe() then
+        last_hooked_exe = wanted
+        return
+    end
+    set_game_capture_window(target)
+end
+
+local function hook_game_timer()
+    local ok, err = pcall(follow_foreground_game)
+    if not ok then
+        log_debug("Game Capture follow failed: " .. tostring(err))
+    end
 end
 
 local function poll_game_timer()
@@ -1693,11 +2020,20 @@ local function queue_file_job(kind, delay_ms)
     local windows_result = detect_game_from_windows()
     if windows_result and not game_looks_generic(windows_result.game) and
         not looks_like_junk_name(windows_result.game) then
-        cached_game = windows_result.game
-        cached_server = windows_result.server
-        cached_process = windows_result.process
-        cached_title = windows_result.window_title
-        last_detection_method = "Windows foreground at save"
+        if windows_result.game == "FiveM" then
+            cached_game = "FiveM"
+            apply_live_fivem_server()
+            last_detection_method = "FiveM live windows at save"
+        else
+            cached_game = windows_result.game
+            cached_server = nil
+            cached_process = windows_result.process
+            cached_title = windows_result.window_title
+            last_detection_method = "Windows foreground at save"
+        end
+    elseif cached_game == "FiveM" then
+        apply_live_fivem_server()
+        last_detection_method = "FiveM live windows at save"
     end
     local folder, source = detected_output_folder()
     if folder == "" then
@@ -1719,7 +2055,8 @@ local function queue_file_job(kind, delay_ms)
         next_check_ms = current_time_ms() + math.max(0, delay_ms)
     }
     table.insert(jobs, job)
-    log_info(kind .. " will go in " .. target_folder_for(folder, job.game, job.server))
+    log_info(kind .. " will go in " .. target_folder_for(folder, job.game, job.server) ..
+        " (live title: " .. tostring(cached_title or "") .. ")")
 
     if not job_timer_running then
         obs.timer_add(job_timer, 100)
@@ -1924,8 +2261,9 @@ end
 function script_description()
     return [[
 <h2>OBS Game Clip Sorter</h2>
-<p><b>Version 1.1.4</b></p>
+<p><b>Version 1.1.7</b></p>
 <p>Automatically moves replay-buffer clips and recordings into folders for the current game.</p>
+<p>Game Capture follows the game in front. You do not need to pick a window in OBS. Discord and browsers are ignored, so tabbing out keeps the last game.</p>
 <p>FiveM files go into <code>your clips folder\Server name</code>, for example <code>Felicity Roleplay\Clip_Felicity_Roleplay_19-08-26_21-00-00.mp4</code>. Other games get their own folder, for example <code>Fortnite</code>.</p>
 <p><b>Leave the custom output folder blank to use your OBS save path automatically.</b></p>
 <p>Advanced settings are optional and hidden by default.</p>
@@ -2063,6 +2401,12 @@ function script_load(settings)
     detect_current_game(false)
     local folder, source = detected_output_folder()
     log_selected_output_folder(folder, source, false)
+    last_hooked_exe = current_hooked_exe()
+    if not hook_timer_running then
+        obs.timer_add(hook_game_timer, 1500)
+        hook_timer_running = true
+    end
+    pcall(follow_foreground_game)
     log_info("Loaded v" .. SCRIPT_VERSION)
 end
 
@@ -2082,9 +2426,17 @@ function script_unload()
         obs.timer_remove(poll_game_timer)
         poll_timer_running = false
     end
+    if hook_timer_running then
+        obs.timer_remove(hook_game_timer)
+        hook_timer_running = false
+    end
     if job_timer_running then
         obs.timer_remove(job_timer)
         job_timer_running = false
+    end
+    if hook_enum_cb ~= nil then
+        pcall(function() hook_enum_cb:free() end)
+        hook_enum_cb = nil
     end
 
     jobs = {}

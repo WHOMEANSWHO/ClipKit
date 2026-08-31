@@ -298,8 +298,8 @@ def _capture_source(
     existing: dict | None = None,
 ) -> dict:
     # "any" grabs whichever fullscreen game is in front.
-    # "This game" uses a normal OBS Game Capture window list. People pick
-    # FiveM / Fortnite / etc. in OBS themselves.
+    # "This game" starts as a specific-window capture. The sorter script
+    # then points it at the game in front, so you never pick a window in OBS.
     existing_settings = existing.get("settings") if isinstance(existing, dict) else None
     if not isinstance(existing_settings, dict):
         existing_settings = {}
@@ -836,7 +836,7 @@ def apply_setup(
             else "off"
         ),
         "capture": (
-            "This game (pick the window in OBS Game Capture)"
+            "This game (follows whatever you tab into)"
             if capture != "any"
             else "Any fullscreen game"
         ),
