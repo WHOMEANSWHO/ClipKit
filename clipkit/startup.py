@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from .install_obs import find_obs_exe
-from .paths import app_dir, is_frozen
+from .paths import app_dir, appdata_dir, is_frozen
 
 STARTUP_NAME = "ClipKit OBS.lnk"
 LEGACY_STARTUP_NAMES = (
@@ -18,28 +18,11 @@ LAUNCHER_NAME = "ClipKit.lnk"
 
 
 def windows_startup_dir() -> Path:
-    return (
-        Path.home()
-        / "AppData"
-        / "Roaming"
-        / "Microsoft"
-        / "Windows"
-        / "Start Menu"
-        / "Programs"
-        / "Startup"
-    )
+    return appdata_dir() / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
 
 
 def start_menu_dir() -> Path:
-    return (
-        Path.home()
-        / "AppData"
-        / "Roaming"
-        / "Microsoft"
-        / "Windows"
-        / "Start Menu"
-        / "Programs"
-    )
+    return appdata_dir() / "Microsoft" / "Windows" / "Start Menu" / "Programs"
 
 
 def _ps_single(value: str) -> str:

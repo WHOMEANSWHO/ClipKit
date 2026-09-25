@@ -15,7 +15,7 @@ from ctypes import wintypes
 from pathlib import Path
 
 from . import __version__
-from .paths import app_dir
+from .paths import app_dir, appdata_dir, local_appdata_dir
 
 GITHUB_LATEST = "https://api.github.com/repos/obsproject/obs-studio/releases/latest"
 USER_AGENT = f"ClipKit/{__version__} (https://github.com/WHOMEANSWHO/ClipKit)"
@@ -49,7 +49,7 @@ def _noop(_message: str) -> None:
 
 
 def _cache_file() -> Path:
-    return Path.home() / "AppData" / "Roaming" / "ClipKit" / "obs64-path.txt"
+    return appdata_dir() / "ClipKit" / "obs64-path.txt"
 
 
 def _remember(path: Path) -> Path:
@@ -273,12 +273,13 @@ def _from_running_process() -> Path | None:
 def _shortcut_folders() -> list[Path]:
     home = Path.home()
     program_data = Path(os.environ.get("ProgramData", r"C:\ProgramData"))
+    roaming = appdata_dir()
     return [
         home / "Desktop",
         home / "OneDrive" / "Desktop",
-        home / "AppData" / "Roaming" / "Microsoft" / "Windows" / "Start Menu",
+        roaming / "Microsoft" / "Windows" / "Start Menu",
         program_data / "Microsoft" / "Windows" / "Start Menu",
-        home / "AppData" / "Roaming" / "Microsoft" / "Internet Explorer" / "Quick Launch",
+        roaming / "Microsoft" / "Internet Explorer" / "Quick Launch",
     ]
 
 
@@ -644,8 +645,7 @@ class _SHELLEXECUTEINFOW(ctypes.Structure):
 
 
 def _installer_path() -> Path:
-    local = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
-    return local / "ClipKit" / "OBS-Studio-Installer.exe"
+    return local_appdata_dir() / "ClipKit" / "OBS-Studio-Installer.exe"
 
 
 def _run_elevated(path: Path, params: str, status: StatusFn, *, show: bool = False) -> None:
@@ -720,8 +720,8 @@ def close_obs() -> None:
 
 def _user_purge_obs() -> None:
     home = Path.home()
-    appdata = Path(os.environ.get("APPDATA") or (home / "AppData" / "Roaming"))
-    local = Path(os.environ.get("LOCALAPPDATA") or (home / "AppData" / "Local"))
+    appdata = appdata_dir()
+    local = local_appdata_dir()
     leftovers = [
         appdata / "obs-studio",
         local / "obs-studio",

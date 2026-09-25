@@ -111,14 +111,16 @@ function Save-Cache {
 
 function Get-DefaultWatchFolders {
     $folders = @(
-        "D:\vids\medal",
-        "C:\Medal",
         (Join-Path $env:USERPROFILE "Videos\Medal"),
+        "C:\Medal",
         "D:\Medal"
     )
+    if ($env:OneDrive) {
+        $folders += (Join-Path $env:OneDrive "Videos\Medal")
+    }
     $found = New-Object System.Collections.Generic.List[string]
     foreach ($folder in $folders) {
-        if (Test-Path -LiteralPath $folder) {
+        if ($folder -and (Test-Path -LiteralPath $folder)) {
             $found.Add((Resolve-Path -LiteralPath $folder).Path)
         }
     }

@@ -6,19 +6,20 @@ import json
 from pathlib import Path
 
 from .keys import DEFAULT_BINDS, Hotkey, UserBinds
+from .paths import appdata_dir
 from .presets import CLIP_LENGTHS, DEFAULT_BITRATE, FPS_CHOICES, PRESET_ORDER, RECORD_BITRATES
 
 
 def settings_path() -> Path:
-    return Path.home() / "AppData" / "Roaming" / "ClipKit" / "settings.json"
+    return appdata_dir() / "ClipKit" / "settings.json"
 
 
 def obs_scripts_dir() -> Path:
-    return Path.home() / "AppData" / "Roaming" / "obs-studio" / "clipkit-scripts"
+    return appdata_dir() / "obs-studio" / "clipkit-scripts"
 
 
 def legacy_clipkit_dir() -> Path:
-    return Path.home() / "AppData" / "Roaming" / "ClipKit"
+    return appdata_dir() / "ClipKit"
 
 
 def last_game_path() -> Path:

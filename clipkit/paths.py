@@ -78,3 +78,127 @@ def mark_file() -> Path | None:
         app_dir() / "packaging" / "clipkit-mark.png",
         app_dir() / "packaging" / "clipkit-icon.png",
     )
+
+
+def _registry_videos_dir() -> Path | None:
+    """Windows Videos library path from Explorer shell folders (OneDrive-aware)."""
+    if os.name != "nt":
+        return None
+    try:
+        import winreg
+    except ImportError:
+        return None
+    keys = (
+        (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders"),
+        (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders"),
+    )
+    for hive, subkey in keys:
+        try:
+            with winreg.OpenKey(hive, subkey) as handle:
+                value, _ = winreg.QueryValueEx(handle, "My Video")
+        except OSError:
+            continue
+        text = str(value or "").strip().strip('"')
+        if not text:
+            continue
+        expanded = os.path.expandvars(text).strip()
+        if expanded:
+            return Path(expanded)
+    return None
+
+
+def videos_dir() -> Path:
+    """Best Videos folder for this PC (registry known folder, else ~/Videos)."""
+    known = _registry_videos_dir()
+    if known is not None:
+        return known
+    return Path.home() / "Videos"
+
+
+def appdata_dir() -> Path:
+    """%APPDATA% (Roaming), with a home fallback when the env var is missing."""
+    raw = (os.environ.get("APPDATA") or "").strip()
+    if raw:
+        return Path(raw)
+    return Path.home() / "AppData" / "Roaming"
+
+
+def local_appdata_dir() -> Path:
+    """%LOCALAPPDATA%, with a home fallback when the env var is missing."""
+    raw = (os.environ.get("LOCALAPPDATA") or "").strip()
+    if raw:
+        return Path(raw)
+    return Path.home() / "AppData" / "Local"
+
+
+def same_path(left: Path | str | None, right: Path | str | None) -> bool:
+    """True when two paths point at the same place (case/slash-insensitive on Windows)."""
+    if left is None or right is None:
+        return False
+    a = str(left).strip()
+    b = str(right).strip()
+    if not a or not b:
+        return False
+
+    def _norm(text: str) -> str:
+        text = text.replace("\\", "/")
+        while "//" in text:
+            text = text.replace("//", "/")
+        if len(text) > 1 and text.endswith("/"):
+            text = text.rstrip("/")
+        return text.lower()
+
+    if _norm(a) == _norm(b):
+        return True
+    try:
+        return _norm(str(Path(a).resolve())) == _norm(str(Path(b).resolve()))
+    except OSError:
+        return False
+
+
+def ensure_directory(path: Path) -> Path:
+    """Create a folder (and parents). Raises OSError if it cannot be made."""
+    path = Path(path)
+    path.mkdir(parents=True, exist_ok=True)
+    if not path.is_dir():
+        raise FileNotFoundError(2, "The system cannot find the file specified", str(path))
+    return path
+
+
+def ensure_clips_dir(preferred: Path | str | None = None) -> Path:
+    """
+    Create the clips folder. Prefer the path the user chose; if Videos (or
+    OneDrive Videos) is missing or broken, fall back to Documents\\ClipKit,
+    then %USERPROFILE%\\ClipKit.
+    """
+    candidates: list[Path] = []
+    if preferred is not None and str(preferred).strip():
+        candidates.append(Path(str(preferred).strip()))
+    for fallback in (
+        videos_dir() / "ClipKit",
+        Path.home() / "Videos" / "ClipKit",
+        Path.home() / "Documents" / "ClipKit",
+        Path.home() / "ClipKit",
+    ):
+        if fallback not in candidates:
+            candidates.append(fallback)
+
+    errors: list[OSError] = []
+    for candidate in candidates:
+        try:
+            return ensure_directory(candidate)
+        except OSError as exc:
+            errors.append(exc)
+    if errors:
+        first = errors[0]
+        wanted = candidates[0]
+        raise OSError(
+            getattr(first, "errno", 2),
+            (
+                f"Could not create the clips folder '{wanted}'. "
+                "Your Videos folder may be missing or moved by OneDrive. "
+                "Click Browse and pick another folder (for example Documents)."
+            ),
+            str(wanted),
+        ) from first
+    raise FileNotFoundError(2, "No clips folder path was given", "")

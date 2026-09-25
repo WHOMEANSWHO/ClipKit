@@ -13,6 +13,7 @@ from typing import Any
 
 from .audio import CaptureDevice, list_capture_devices
 from .install_obs import obs_exe_present
+from .paths import appdata_dir
 
 
 @dataclass
@@ -37,7 +38,7 @@ class Hardware:
 
 
 def _hardware_cache_path() -> Path:
-    return Path.home() / "AppData" / "Roaming" / "ClipKit" / "hardware.json"
+    return appdata_dir() / "ClipKit" / "hardware.json"
 
 
 def load_cached_hardware() -> Hardware | None:

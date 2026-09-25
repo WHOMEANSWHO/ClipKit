@@ -105,6 +105,7 @@ local hook_timer_running = false
 local last_hooked_exe = ""
 local hook_enum_cb = nil
 local hook_enum_state = nil
+local hide_desktop_tries = 0
 
 local VIDEO_EXTENSIONS = {
     ["mp4"] = true,
@@ -2067,45 +2068,61 @@ end
 ------------------------------------------------------------------------
 -- Clip saved popup
 ------------------------------------------------------------------------
-local function show_clip_saved_popup(title)
-    if ffi == nil or kernel32 == nil then
+-- Intentionally omitted here. clipkit_clip_saved.lua owns the on-screen popup
+-- so clips do not show two notifications.
+
+------------------------------------------------------------------------
+-- Hide Desktop Audio (ported from clipkit_autostart.lua)
+------------------------------------------------------------------------
+local function disable_desktop_audio()
+    -- Channels 1 and 2 are Desktop Audio / Desktop Audio 2. Leave mic (3) alone.
+    pcall(obs.obs_set_output_source, 1, nil)
+    pcall(obs.obs_set_output_source, 2, nil)
+    local sources = obs.obs_enum_sources()
+    if sources == nil then
         return
     end
-    local appdata = os.getenv("APPDATA")
-    if appdata == nil or appdata == "" then
-        return
+    for _, source in ipairs(sources) do
+        local id = obs.obs_source_get_unversioned_id(source)
+        if id == "wasapi_output_capture" then
+            local priv = obs.obs_source_get_private_settings(source)
+            obs.obs_data_set_bool(priv, "mixer_hidden", true)
+            obs.obs_data_release(priv)
+            pcall(obs.obs_source_set_muted, source, true)
+            pcall(obs.obs_source_set_enabled, source, false)
+        end
     end
-    local ps1 = appdata .. "\\obs-studio\\clipkit-scripts\\clipkit_toast.ps1"
-    local powershell = (os.getenv("SystemRoot") or "C:\\Windows") ..
-        "\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
-    local command = '"' .. powershell ..
-        '" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "' ..
-        ps1 .. '" -Popup -Title "' .. tostring(title) .. '"'
-    local startup = ffi.new("STARTUPINFOA")
-    startup.cb = ffi.sizeof(startup)
-    local process = ffi.new("PROCESS_INFORMATION")
-    local mutable_command = ffi.new("char[?]", #command + 1)
-    ffi.copy(mutable_command, command)
-    local created = kernel32.CreateProcessA(
-        powershell, mutable_command, nil, nil, 0,
-        0x08000000, nil, nil, startup, process)
-    if created ~= 0 then
-        kernel32.CloseHandle(process.hThread)
-        kernel32.CloseHandle(process.hProcess)
+    obs.source_list_release(sources)
+end
+
+function hide_desktop_tick()
+    hide_desktop_tries = hide_desktop_tries + 1
+    disable_desktop_audio()
+    if hide_desktop_tries >= 10 then
+        obs.timer_remove(hide_desktop_tick)
     end
+end
+
+local function keep_hiding_desktop()
+    hide_desktop_tries = 0
+    disable_desktop_audio()
+    pcall(function()
+        obs.timer_remove(hide_desktop_tick)
+    end)
+    obs.timer_add(hide_desktop_tick, 400)
 end
 
 ------------------------------------------------------------------------
 -- OBS events
 ------------------------------------------------------------------------
 local function frontend_event(event)
-    if event == obs.OBS_FRONTEND_EVENT_REPLAY_BUFFER_SAVED then
+    if event == obs.OBS_FRONTEND_EVENT_FINISHED_LOADING then
+        keep_hiding_desktop()
+    elseif event == obs.OBS_FRONTEND_EVENT_REPLAY_BUFFER_SAVED then
         log_debug("OBS event: replay buffer saved")
-        show_clip_saved_popup("Clip saved")
         queue_file_job("Clip", clip_delay_ms)
     elseif event == obs.OBS_FRONTEND_EVENT_RECORDING_STOPPED then
         log_debug("OBS event: recording stopped")
-        show_clip_saved_popup("Recording saved")
         queue_file_job("Recording", recording_delay_ms)
         recording_active = false
     elseif event == obs.OBS_FRONTEND_EVENT_REPLAY_BUFFER_STARTED then
@@ -2407,6 +2424,7 @@ function script_load(settings)
         hook_timer_running = true
     end
     pcall(follow_foreground_game)
+    keep_hiding_desktop()
     log_info("Loaded v" .. SCRIPT_VERSION)
 end
 
@@ -2434,6 +2452,9 @@ function script_unload()
         obs.timer_remove(job_timer)
         job_timer_running = false
     end
+    pcall(function()
+        obs.timer_remove(hide_desktop_tick)
+    end)
     if hook_enum_cb ~= nil then
         pcall(function() hook_enum_cb:free() end)
         hook_enum_cb = nil
