@@ -114,10 +114,13 @@ def newest_clip(folder: Path, *, after: float) -> Path | None:
     return newest
 
 
-def reveal_in_explorer(path: Path) -> None:
-    path = path.resolve()
+def reveal_in_explorer(path: Path) -> Path:
+    from .paths import ensure_clips_dir
+
+    path = Path(path)
     if path.is_file():
         subprocess.Popen(["explorer", f"/select,{path}"], close_fds=True)
-        return
-    path.mkdir(parents=True, exist_ok=True)
-    os.startfile(os.fsdecode(path))
+        return path
+    folder = ensure_clips_dir(path)
+    os.startfile(os.fsdecode(folder))
+    return folder

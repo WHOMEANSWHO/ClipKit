@@ -14,7 +14,7 @@ from .audio import list_capture_devices, resolve_microphone
 from .install_obs import find_obs_exe
 from .keys import DEFAULT_BINDS, Hotkey, UserBinds
 from .notifications import install_toast_identity
-from .paths import scripts_dir
+from .paths import ensure_clips_dir, scripts_dir, videos_dir
 from .presets import Preset
 from .startup import install_obs_windows_startup, remove_obs_windows_startup
 
@@ -27,11 +27,10 @@ REC_TRACKS_GAME_AND_MIC = TRACK_GAME | TRACK_MIC
 
 
 def default_output_dir() -> Path:
-    videos = Path.home() / "Videos" / "ClipKit"
     existing = Path("D:/vids/obs")
     if existing.is_dir():
         return existing
-    return videos
+    return videos_dir() / "ClipKit"
 
 
 def obs_config_dir() -> Path:
@@ -754,7 +753,8 @@ def apply_setup(
     config_dir = Path(config_dir) if config_dir else obs_config_dir()
     _bootstrap_config(config_dir)
 
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # Videos\\ClipKit often fails on PCs where Videos is missing or OneDrive-moved.
+    output_dir = ensure_clips_dir(output_dir)
     backup_dir = config_dir / "clipkit-backups" / datetime.now().strftime("%Y%m%d-%H%M%S")
     backup_dir.mkdir(parents=True, exist_ok=True)
     user_ini = config_dir / "user.ini"

@@ -920,7 +920,9 @@ class ClipKitApp(tk.Tk):
             messagebox.showerror("Clips folder", "Pick a folder where clips should be saved.")
             return
         try:
-            reveal_in_explorer(Path(folder))
+            opened = reveal_in_explorer(Path(folder))
+            if str(opened) != folder:
+                self._output.set(str(opened))
         except OSError as exc:
             messagebox.showerror("Clips folder", f"Could not open that folder.\n\n{exc}")
 
@@ -1267,15 +1269,18 @@ class ClipKitApp(tk.Tk):
         try:
             result = apply_setup(
                 preset,
-                Path(self._output.get()),
+                Path(self._output.get().strip()),
                 binds=self._current_binds(),
                 capture=self._capture.get(),
                 enable_recording=self._enable_recording.get(),
                 start_with_windows=self._start_with_windows.get(),
             )
+            used = str(result.get("output_dir") or "").strip()
+            if used and used != self._output.get().strip():
+                self._output.set(used)
             if self._sort_medal.get():
                 try:
-                    result["medal"] = install_medal_sorter(Path(self._output.get()))
+                    result["medal"] = install_medal_sorter(Path(self._output.get().strip()))
                 except Exception:  # noqa: BLE001
                     traceback.print_exc()
                     result["medal"] = {"error": True}

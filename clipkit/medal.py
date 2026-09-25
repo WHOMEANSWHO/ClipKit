@@ -242,9 +242,11 @@ def write_medal_sorter_config(output_dir: Path, watch: list[Path] | None = None)
 
 def install_medal_sorter(output_dir: Path | None = None) -> dict:
     """Copy the watcher into AppData, start it, and keep it on Windows Startup."""
+    from .paths import ensure_clips_dir
+
     watch = find_medal_capture_folders()
     dest = watch[0] if watch else Path(output_dir or r"D:\vids\medal")
-    dest.mkdir(parents=True, exist_ok=True)
+    dest = ensure_clips_dir(dest)
     source = scripts_dir() / SORTER_SCRIPT
     if not source.is_file():
         raise FileNotFoundError(f"Medal sorter script is missing: {source}")
