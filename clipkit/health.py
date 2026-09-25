@@ -114,13 +114,22 @@ def newest_clip(folder: Path, *, after: float) -> Path | None:
     return newest
 
 
+def _explorer_select_command(path: Path) -> str:
+    """Command line that opens Explorer with the file selected.
+
+    Explorer needs ``/select,"<path>"`` with no space after the comma. Passing a
+    list to subprocess mangles the embedded quotes (list2cmdline escapes them),
+    so build the command line as one string and hand it to Popen directly.
+    """
+    return f'explorer /select,"{os.path.normpath(str(path))}"'
+
+
 def reveal_in_explorer(path: Path) -> Path:
     from .paths import ensure_clips_dir
 
     path = Path(path)
     if path.is_file():
-        # Quoting is required when the path has spaces; /select,"C:\path with space\file.mp4"
-        subprocess.Popen(["explorer", f'/select,"{path}"'], close_fds=True)
+        subprocess.Popen(_explorer_select_command(path), close_fds=True)
         return path
     folder = ensure_clips_dir(path)
     os.startfile(os.fsdecode(folder))
