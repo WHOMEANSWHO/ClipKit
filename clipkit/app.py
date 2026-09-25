@@ -48,9 +48,11 @@ PANEL = "#171f33"
 SURFACE = "#131b2e"
 RAISED = "#222a3d"
 BRIGHT = "#31394d"
-BORDER = "#464555"
-TEXT = "#dae2fd"
-MUTED = "#c7c4d8"
+# Subtler hairline borders read cleaner than the old heavy grey.
+BORDER = "#2b3550"
+TEXT = "#e6ebff"
+# Cooler slate for secondary text — clearer hierarchy against TEXT.
+MUTED = "#9aa5c4"
 PRIMARY = "#c3c0ff"
 PRIMARY_BTN = "#4f46e5"
 ON_PRIMARY = "#1d00a5"
@@ -882,13 +884,13 @@ class ClipKitApp(tk.Tk):
         bitrate = f"{mbps:g} Mbps" if mbps == int(mbps) else f"{preset.bitrate_kbps} kbps"
         clip_mb = estimated_clip_mb(preset.bitrate_kbps, seconds)
         size = f"≈{clip_mb / 1024:.1f} GB/clip" if clip_mb >= 1024 else f"≈{clip_mb} MB/clip"
-        self.preset_copy.configure(
-            text=(
-                f"{preset.output_width}×{preset.output_height}  •  {preset.fps} fps  •  "
-                f"{bitrate}  •  {preset.encoder_label}  •  last {length}  •  {size}  •  "
-                f"Save {save_label}{tag}"
-            )
+        # Two tidy lines: video spec on top, storage/hotkey below (avoids a cramped wrap).
+        spec = (
+            f"{preset.output_width}×{preset.output_height}  •  {preset.fps} fps  •  "
+            f"{bitrate}  •  {preset.encoder_label}"
         )
+        meta = f"{size}  •  last {length}  •  Save {save_label}{tag}"
+        self.preset_copy.configure(text=f"{spec}\n{meta}")
         for value, (btn, label) in getattr(self, "_quality_chips", {}).items():
             btn.configure(text=f"{label}  •  Best" if value == rec else label)
         for store, variable in self._chip_groups:
