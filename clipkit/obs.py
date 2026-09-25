@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .audio import list_capture_devices, resolve_microphone
+from .diagnostics import log
 from .install_obs import find_obs_exe
 from .keys import DEFAULT_BINDS, Hotkey, UserBinds
 from .notifications import install_toast_identity
@@ -762,6 +763,12 @@ def apply_setup(
     binds = binds or DEFAULT_BINDS
     capture = "any" if capture == "any" else "window"
     config_dir = Path(config_dir) if config_dir else obs_config_dir()
+    log(
+        f"apply_setup start: preset={preset.label} "
+        f"{preset.output_width}x{preset.output_height}@{preset.fps} "
+        f"bitrate={preset.bitrate_kbps}kbps encoder={preset.encoder_id} "
+        f"capture={capture} config_dir={config_dir}"
+    )
     _bootstrap_config(config_dir)
 
     # Videos\\ClipKit often fails on PCs where Videos is missing or OneDrive-moved.
@@ -830,7 +837,7 @@ def apply_setup(
     else:
         remove_obs_windows_startup()
 
-    return {
+    result = {
         "profile": PROFILE_NAME,
         "scene": SCENE_NAME,
         "output_dir": str(output_dir),
@@ -867,3 +874,5 @@ def apply_setup(
         "sorter": True,
         "clip_saved": True,
     }
+    log(f"apply_setup done: output_dir={result['output_dir']} mic={result['mic']}")
+    return result
