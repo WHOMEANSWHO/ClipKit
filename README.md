@@ -75,12 +75,22 @@ If the OBS preview is black or game audio is missing, run OBS as administrator.
 python -m pip install -r requirements.txt
 python clipkit.py
 python clipkit.py --detect
+python clipkit.py --version
 python build.py
 ```
 
 `build.py` writes `dist\ClipKit.exe` and copies it to `release\ClipKit.exe`. Ship that file as a GitHub Release asset — that is what the download link above uses.
 
-`--detect` prints GPU, RAM, and the recommended preset without changing OBS.
+`--detect` prints GPU, RAM, and the recommended preset without changing OBS. `--version` prints the ClipKit version and exits.
+
+### Tests and CI
+
+```text
+python -m pip install -r requirements-dev.txt
+python -m pytest tests
+```
+
+The tests cover the cross-platform logic (presets, hotkeys, microphone selection, settings, and OBS profile/scene generation). GitHub Actions (`.github/workflows/windows.yml`) runs the tests on `windows-latest`, checks `--detect` and a `--dry-run` profile write, builds `ClipKit.exe`, uploads it as a build artifact, and attaches it to a Release when you push a `v*` tag.
 
 ## Notes
 
