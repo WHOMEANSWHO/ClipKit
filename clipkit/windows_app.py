@@ -15,7 +15,7 @@ from .startup import create_shortcut, start_menu_dir
 
 UNINSTALL_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\ClipKit"
 APP_PATHS_KEY = r"Software\Microsoft\Windows\CurrentVersion\App Paths\ClipKit.exe"
-PUBLISHER = "WHOISWHO"
+PUBLISHER = "WHOMEANSWHO"
 HOMEPAGE = "https://github.com/WHOMEANSWHO/ClipKit"
 START_FOLDER = "ClipKit"
 LEGACY_START_LINK = "ClipKit.lnk"
