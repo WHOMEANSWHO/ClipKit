@@ -36,9 +36,11 @@ from .presets import (
     RECORD_BITRATES,
     Preset,
     all_presets,
+    estimated_clip_mb,
     recommend_bitrate,
     recommend_id,
 )
+from .diagnostics import log, log_exception
 from .settings import binds_from_settings, load_settings, save_settings, settings_from_app
 
 BG = "#0b1326"
@@ -878,10 +880,13 @@ class ClipKitApp(tk.Tk):
         save_label = save.hotkey.label if save else "F9"
         mbps = preset.bitrate_kbps / 1000
         bitrate = f"{mbps:g} Mbps" if mbps == int(mbps) else f"{preset.bitrate_kbps} kbps"
+        clip_mb = estimated_clip_mb(preset.bitrate_kbps, seconds)
+        size = f"≈{clip_mb / 1024:.1f} GB/clip" if clip_mb >= 1024 else f"≈{clip_mb} MB/clip"
         self.preset_copy.configure(
             text=(
                 f"{preset.output_width}×{preset.output_height}  •  {preset.fps} fps  •  "
-                f"{bitrate}  •  {preset.encoder_label}  •  last {length}  •  Save {save_label}{tag}"
+                f"{bitrate}  •  {preset.encoder_label}  •  last {length}  •  {size}  •  "
+                f"Save {save_label}{tag}"
             )
         )
         for value, (btn, label) in getattr(self, "_quality_chips", {}).items():
@@ -1141,6 +1146,7 @@ class ClipKitApp(tk.Tk):
     def _install_failed(self, exc: Exception) -> None:
         self._set_busy(False, "OBS install did not finish.")
         traceback.print_exc()
+        log_exception(f"OBS install failed: {exc}")
         messagebox.showerror("Could not install OBS", str(exc))
 
     def _persist_settings(self) -> None:
@@ -1347,8 +1353,10 @@ class ClipKitApp(tk.Tk):
         except Exception as exc:  # noqa: BLE001
             self._set_busy(False)
             traceback.print_exc()
+            log_exception(f"apply_setup failed: {exc}")
             messagebox.showerror("ClipKit could not apply settings", str(exc))
             return
+        log(f"apply succeeded: profile={result.get('profile')} output={result.get('output_dir')}")
         self._just_installed = False
         if result.get("mic_device_id"):
             self._saved = dict(self._saved or {})
