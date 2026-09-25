@@ -133,8 +133,6 @@ def recommend_id(hw: Hardware) -> str:
         return "low"
     if vram and vram < 4:
         return "low"
-    if encoder_id == "obs_x264":
-        return "low"
     if ram and ram < 16:
         return "medium"
     if vram and vram < 6:
@@ -161,6 +159,17 @@ def recommend_bitrate(output_width: int, output_height: int, fps: int) -> int:
     raw_kbps = width * height * frames * 0.1125 / 1000
     # Nearest allowed value; on a tie prefer the higher (better-quality) option.
     return min(allowed, key=lambda value: (abs(value - raw_kbps), -value))
+
+
+# ~160 kbps per audio track (game + mic), so budget two tracks for the estimate.
+_AUDIO_KBPS = 320
+
+
+def estimated_clip_mb(bitrate_kbps: int, seconds: int) -> int:
+    """Rough size in MB of one saved clip at this bitrate and length."""
+    total_kbps = max(int(bitrate_kbps or 0), 0) + _AUDIO_KBPS
+    seconds = max(int(seconds or 0), 0)
+    return max(1, round(total_kbps * seconds / 8192))
 
 
 def build_preset(

@@ -11,6 +11,7 @@ from clipkit.presets import (
     RECORD_BITRATES,
     all_presets,
     build_preset,
+    estimated_clip_mb,
     recommend_bitrate,
     recommend_id,
 )
@@ -117,6 +118,21 @@ def test_recommend_bitrate_always_returns_an_offered_value():
 
 def test_recommend_bitrate_handles_bad_input():
     assert recommend_bitrate(0, 0, 0) in ALLOWED_BITRATES
+
+
+def test_estimated_clip_mb_known_values():
+    # (14000 video + 320 audio) kbps * 300 s / 8192 ≈ 524 MB
+    assert estimated_clip_mb(14000, 300) == 524
+    assert estimated_clip_mb(14000, 30) == 52
+
+
+def test_estimated_clip_mb_grows_with_length_and_bitrate():
+    assert estimated_clip_mb(14000, 300) > estimated_clip_mb(14000, 60)
+    assert estimated_clip_mb(25000, 300) > estimated_clip_mb(14000, 300)
+
+
+def test_estimated_clip_mb_handles_zero():
+    assert estimated_clip_mb(0, 0) == 1
 
 
 def test_all_presets_covers_every_tier():
