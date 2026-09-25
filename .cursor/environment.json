@@ -1,0 +1,4 @@
+{
+  "name": "ClipKit",
+  "install": "bash .cursor/install.sh"
+}
