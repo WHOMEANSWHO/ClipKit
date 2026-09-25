@@ -43,24 +43,26 @@ from .presets import (
 from .diagnostics import log, log_exception
 from .settings import binds_from_settings, load_settings, save_settings, settings_from_app
 
-BG = "#0b1326"
-PANEL = "#171f33"
-SURFACE = "#131b2e"
-RAISED = "#222a3d"
-BRIGHT = "#31394d"
-# Subtler hairline borders read cleaner than the old heavy grey.
-BORDER = "#2b3550"
-TEXT = "#e6ebff"
-# Cooler slate for secondary text — clearer hierarchy against TEXT.
-MUTED = "#9aa5c4"
-PRIMARY = "#c3c0ff"
-PRIMARY_BTN = "#4f46e5"
-ON_PRIMARY = "#1d00a5"
+# --- ClipKit design system (dark slate + indigo accent) ---
+BG = "#0e1017"          # app background
+PANEL = "#171a22"       # card surface
+SURFACE = "#1e222c"     # inputs / segmented tracks
+RAISED = "#272c38"      # hover / secondary buttons
+BRIGHT = "#333a49"      # active hover
+BORDER = "#252b39"      # subtle hairline
+TEXT = "#eef1f8"        # primary text
+MUTED = "#98a1b5"       # secondary text
+PRIMARY = "#a5b4fc"     # accent text on dark
+PRIMARY_BTN = "#6366f1" # accent fill (primary actions / selected)
+ON_PRIMARY = "#ffffff"  # text on accent fill
 BLURPLE = PRIMARY_BTN
-BLURPLE_DIM = "#3323cc"
-GREEN = "#4edea3"
-AMBER = "#ffb95f"
-KEY_BG = "#31394d"
+BLURPLE_DIM = "#4f46e5"
+GREEN = "#34d399"
+AMBER = "#fbbf24"
+DANGER = "#f87171"
+KEY_BG = "#1e222c"
+ACCENT_SOFT = "#1b2036"  # tinted strip behind the live summary
+WARN_BG = "#2a2113"      # amber warning bar
 UI = "Segoe UI"
 MONO = "Cascadia Mono"
 
@@ -73,26 +75,37 @@ class KeybindButton(tk.Button):
             command=self._listen,
             bg=KEY_BG,
             fg=TEXT,
-            activebackground=PRIMARY,
-            activeforeground=ON_PRIMARY,
+            activebackground=RAISED,
+            activeforeground=TEXT,
             disabledforeground=MUTED,
-            relief="raised",
-            bd=1,
-            padx=12,
-            pady=4,
-            font=(MONO, 10),
+            relief="flat",
+            bd=0,
+            highlightbackground=BORDER,
+            highlightthickness=1,
+            padx=14,
+            pady=6,
+            font=(MONO, 10, "bold"),
             cursor="hand2",
-            highlightthickness=0,
         )
         self.hotkey = initial
         self._on_change = on_change
         self._listening = False
+        self.bind("<Enter>", self._on_enter)
+        self.bind("<Leave>", self._on_leave)
+
+    def _on_enter(self, _event=None) -> None:
+        if not self._listening:
+            self.configure(bg=RAISED)
+
+    def _on_leave(self, _event=None) -> None:
+        if not self._listening:
+            self.configure(bg=KEY_BG)
 
     def _listen(self) -> None:
         if self._listening:
             return
         self._listening = True
-        self.configure(text="Press a key…", bg=PRIMARY, fg=ON_PRIMARY, relief="flat")
+        self.configure(text="Press a key…", bg=PRIMARY_BTN, fg=ON_PRIMARY, relief="flat")
         self.bind_all("<KeyPress>", self._on_key)
         self.bind_all("<ButtonPress-2>", self._on_mouse)
         self.bind_all("<ButtonPress-3>", self._on_mouse)
@@ -118,7 +131,7 @@ class KeybindButton(tk.Button):
         self.unbind_all("<ButtonPress-4>")
         self.unbind_all("<ButtonPress-5>")
         self._listening = False
-        self.configure(text=self.hotkey.label, bg=KEY_BG, fg=TEXT, relief="raised")
+        self.configure(text=self.hotkey.label, bg=KEY_BG, fg=TEXT, relief="flat")
         if self._on_change:
             self._on_change()
 
@@ -253,30 +266,33 @@ class ClipKitApp(tk.Tk):
 
     def _card(self, parent: tk.Misc, title: str, subtitle: str = "") -> tk.Frame:
         shell = tk.Frame(parent, bg=BG)
-        shell.pack(fill="both", expand=True, pady=(0, 12))
+        shell.pack(fill="both", expand=True, pady=(0, 14))
         border = tk.Frame(shell, bg=BORDER)
         border.pack(fill="both", expand=True)
-        inner = tk.Frame(border, bg=PANEL)
-        inner.pack(fill="both", expand=True, padx=1, pady=1)
-        tk.Frame(inner, bg=PRIMARY_BTN, height=2).pack(fill="x")
-        content = tk.Frame(inner, bg=PANEL)
-        content.pack(fill="both", expand=True)
+        content = tk.Frame(border, bg=PANEL)
+        content.pack(fill="both", expand=True, padx=1, pady=1)
         head = tk.Frame(content, bg=PANEL)
-        head.pack(fill="x", padx=20, pady=(16, 8))
-        tk.Label(head, text=title, bg=PANEL, fg=TEXT, font=(UI, 16, "bold")).pack(anchor="w")
+        head.pack(fill="x", padx=22, pady=(18, 10))
+        tk.Label(head, text=title, bg=PANEL, fg=TEXT, font=(UI, 15, "bold")).pack(anchor="w")
         if subtitle:
             tk.Label(
-                head, text=subtitle, bg=PANEL, fg=MUTED, font=(UI, 10), wraplength=520, justify="left"
-            ).pack(anchor="w", pady=(4, 0))
+                head, text=subtitle, bg=PANEL, fg=MUTED, font=(UI, 10), wraplength=440, justify="left"
+            ).pack(anchor="w", pady=(3, 0))
         return content
 
     def _refresh_chips(self, store: dict, variable: tk.Variable) -> None:
         current = variable.get()
         for value, (btn, _label) in store.items():
             if value == current:
-                btn.configure(bg=PRIMARY, fg=ON_PRIMARY)
+                btn.configure(bg=PRIMARY_BTN, fg=ON_PRIMARY)
             else:
                 btn.configure(bg=SURFACE, fg=MUTED)
+
+    def _hover_chip(self, store: dict, variable: tk.Variable, value, entering: bool) -> None:
+        if value == variable.get():
+            return
+        btn, _label = store[value]
+        btn.configure(bg=RAISED if entering else SURFACE, fg=TEXT if entering else MUTED)
 
     def _chips(
         self,
@@ -287,14 +303,14 @@ class ClipKitApp(tk.Tk):
         command=None,
     ) -> dict:
         wrap = tk.Frame(parent, bg=PANEL)
-        wrap.pack(fill="x", padx=20, pady=(4, 12))
+        wrap.pack(fill="x", padx=22, pady=(4, 14))
         tk.Label(
             wrap, text=title.upper(), bg=PANEL, fg=MUTED, font=(UI, 8, "bold")
         ).pack(anchor="w")
         track = tk.Frame(wrap, bg=SURFACE, highlightbackground=BORDER, highlightthickness=1)
         track.pack(fill="x", pady=(8, 0))
         row = tk.Frame(track, bg=SURFACE)
-        row.pack(fill="x", padx=4, pady=4)
+        row.pack(fill="x", padx=3, pady=3)
         store: dict = {}
 
         def pick(value) -> None:
@@ -310,12 +326,14 @@ class ClipKitApp(tk.Tk):
                 bg=SURFACE,
                 fg=MUTED,
                 padx=14,
-                pady=8,
-                font=(UI, 10),
+                pady=9,
+                font=(UI, 10, "bold"),
                 cursor="hand2",
             )
             btn.pack(side="left", padx=2, fill="x", expand=True)
             btn.bind("<Button-1>", lambda _e, v=value: pick(v))
+            btn.bind("<Enter>", lambda _e, v=value: self._hover_chip(store, variable, v, True))
+            btn.bind("<Leave>", lambda _e, v=value: self._hover_chip(store, variable, v, False))
             store[value] = (btn, label)
         self._chip_groups.append((store, variable))
         self._refresh_chips(store, variable)
@@ -397,11 +415,11 @@ class ClipKitApp(tk.Tk):
         self._system_label_widget.pack(anchor="e")
         tk.Label(right_meta, text=f"v{__version__}", bg=PANEL, fg=MUTED, font=(MONO, 9)).pack(anchor="e")
 
-        self.warn_bar = tk.Frame(self, bg="#3d2a12")
+        self.warn_bar = tk.Frame(self, bg=WARN_BG)
         self.warn_label = tk.Label(
             self.warn_bar,
             text="OBS is open. Apply will restart OBS. FiveM and other games can stay running.",
-            bg="#3d2a12",
+            bg=WARN_BG,
             fg=AMBER,
             font=("Segoe UI Semibold", 9),
             pady=8,
@@ -425,18 +443,19 @@ class ClipKitApp(tk.Tk):
             text="Apply to OBS",
             command=self.apply,
             bg=PRIMARY_BTN,
-            fg=PRIMARY,
+            fg=ON_PRIMARY,
             activebackground=BLURPLE_DIM,
-            activeforeground=PRIMARY,
+            activeforeground=ON_PRIMARY,
             disabledforeground=MUTED,
             relief="flat",
             bd=0,
-            padx=28,
-            pady=12,
+            padx=30,
+            pady=13,
             font=(UI, 13, "bold"),
             cursor="hand2",
         )
         self.apply_btn.pack(side="right")
+        self._add_hover(self.apply_btn, PRIMARY_BTN, BLURPLE_DIM)
         self.test_btn = tk.Button(
             bar,
             text="Test clip",
@@ -454,6 +473,7 @@ class ClipKitApp(tk.Tk):
             cursor="hand2",
         )
         self.test_btn.pack(side="right", padx=(0, 10))
+        self._add_hover(self.test_btn, SURFACE, RAISED)
 
         shell = tk.Frame(self, bg=BG)
         shell.pack(fill="both", expand=True, padx=28, pady=(16, 0))
@@ -514,10 +534,14 @@ class ClipKitApp(tk.Tk):
             [(pid, pid.title()) for pid in PRESET_ORDER],
             self._on_choices_changed,
         )
+        summary_wrap = tk.Frame(choices, bg=ACCENT_SOFT)
+        summary_wrap.pack(fill="x", padx=22, pady=(2, 8))
+        tk.Frame(summary_wrap, bg=PRIMARY_BTN, width=3).pack(side="left", fill="y")
         self.preset_copy = tk.Label(
-            choices, text="", bg=PANEL, fg=PRIMARY, font=(MONO, 9), wraplength=520, justify="left"
+            summary_wrap, text="", bg=ACCENT_SOFT, fg=TEXT, font=(MONO, 9), wraplength=430,
+            justify="left",
         )
-        self.preset_copy.pack(anchor="w", padx=20, pady=(0, 4))
+        self.preset_copy.pack(side="left", anchor="w", padx=13, pady=10)
         self._chips(
             choices,
             "Clip length",
@@ -534,9 +558,9 @@ class ClipKitApp(tk.Tk):
         )
         self._chips(
             choices,
-            "Bitrate",
+            "Bitrate (Mbps)",
             self._bitrate,
-            RECORD_BITRATES,
+            [(kbps, str(kbps // 1000)) for kbps, _label in RECORD_BITRATES],
             self._on_choices_changed,
         )
         self._chips(
@@ -552,7 +576,7 @@ class ClipKitApp(tk.Tk):
             bg=PANEL,
             fg=MUTED,
             font=(MONO, 8),
-            wraplength=520,
+            wraplength=380,
             justify="left",
         ).pack(anchor="w", padx=20, pady=(0, 8))
         self._chips(
@@ -580,7 +604,7 @@ class ClipKitApp(tk.Tk):
             bg=PANEL,
             fg=MUTED,
             font=(MONO, 8),
-            wraplength=520,
+            wraplength=380,
             justify="left",
         ).pack(anchor="w", padx=20, pady=(0, 16))
 
@@ -603,7 +627,7 @@ class ClipKitApp(tk.Tk):
             bg=PANEL,
             fg=MUTED,
             font=(MONO, 8),
-            wraplength=520,
+            wraplength=380,
             justify="left",
         ).pack(anchor="w", padx=20, pady=(0, 8))
         self.medal_btn = tk.Button(
@@ -623,6 +647,7 @@ class ClipKitApp(tk.Tk):
             cursor="hand2",
         )
         self.medal_btn.pack(anchor="w", padx=20, pady=(0, 16))
+        self._add_hover(self.medal_btn, RAISED, BRIGHT)
 
         binds = self._card(right, "Keybinds", "Click a keycap, then press the key or mouse button.")
         self.save_bind = self._bind_row(binds, "Save clip", DEFAULT_BINDS.save)
@@ -661,7 +686,7 @@ class ClipKitApp(tk.Tk):
             bg=PANEL,
             fg=MUTED,
             font=(UI, 9),
-            wraplength=420,
+            wraplength=380,
             justify="left",
         ).pack(anchor="w", padx=20, pady=(0, 12))
         self.fresh_btn = tk.Button(
@@ -681,22 +706,38 @@ class ClipKitApp(tk.Tk):
             cursor="hand2",
         )
         self.fresh_btn.pack(anchor="w", padx=20, pady=(0, 16))
+        self._add_hover(self.fresh_btn, RAISED, BRIGHT)
 
         self._sync_record_bind()
         self._sync_mic_controls()
 
     def _make_pill(self, parent: tk.Misc, title: str, value: str, *, accent: bool = False) -> tk.Label:
-        bg = "#0d2a22" if accent else SURFACE
-        box = tk.Frame(parent, bg=bg, highlightbackground=BORDER, highlightthickness=1)
-        box.pack(side="left", padx=(0, 8), pady=2, fill="x", expand=True)
+        bg = "#12241d" if accent else SURFACE
+        edge = GREEN if accent else BORDER
+        outer = tk.Frame(parent, bg=edge)
+        outer.pack(side="left", padx=(0, 10), pady=2, fill="x", expand=True)
+        box = tk.Frame(outer, bg=bg)
+        box.pack(fill="both", expand=True, padx=1, pady=1)
         tk.Label(box, text=title.upper(), bg=bg, fg=GREEN if accent else MUTED, font=(UI, 7, "bold")).pack(
-            anchor="w", padx=12, pady=(8, 0)
+            anchor="w", padx=13, pady=(10, 0)
         )
         value_lbl = tk.Label(
-            box, text=value, bg=bg, fg=TEXT, font=(MONO, 9), wraplength=200, justify="left"
+            box, text=value, bg=bg, fg=TEXT, font=(MONO, 10), wraplength=200, justify="left"
         )
-        value_lbl.pack(anchor="w", padx=12, pady=(2, 8))
+        value_lbl.pack(anchor="w", padx=13, pady=(2, 10))
         return value_lbl
+
+    def _add_hover(self, widget: tk.Button, base: str, hover: str) -> None:
+        def on_enter(_e) -> None:
+            if str(widget["state"]) != "disabled":
+                widget.configure(bg=hover)
+
+        def on_leave(_e) -> None:
+            if str(widget["state"]) != "disabled":
+                widget.configure(bg=base)
+
+        widget.bind("<Enter>", on_enter)
+        widget.bind("<Leave>", on_leave)
 
     def _selected_mic(self) -> tuple[str, str]:
         device = self._mic_by_label.get(self._mic_choice.get().strip())
