@@ -3,11 +3,36 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from pathlib import Path
 
 from .keys import DEFAULT_BINDS, Hotkey, UserBinds
 from .paths import appdata_dir
 from .presets import CLIP_LENGTHS, DEFAULT_BITRATE, FPS_CHOICES, PRESET_ORDER, RECORD_BITRATES
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write a file in one step so a crash cannot leave it half-written.
+
+    The text goes to a temporary file in the same folder, is flushed to disk,
+    then atomically renamed over the target. A partially written temp file is
+    cleaned up on failure so it never shadows the real settings file.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f"{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
 
 
 def settings_path() -> Path:
@@ -32,8 +57,8 @@ def ptt_config_path() -> Path:
 
 def save_ptt_config(binds: UserBinds) -> None:
     path = ptt_config_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
+    _atomic_write_text(
+        path,
         json.dumps(
             {
                 "enabled": binds.ptt_enabled,
@@ -41,7 +66,6 @@ def save_ptt_config(binds: UserBinds) -> None:
             },
             indent=2,
         ),
-        encoding="utf-8",
     )
 
 
@@ -120,9 +144,7 @@ def load_settings() -> dict:
 
 
 def save_settings(data: dict) -> None:
-    path = settings_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    _atomic_write_text(settings_path(), json.dumps(data, indent=2))
 
 
 def binds_from_settings(data: dict) -> UserBinds:

@@ -7,10 +7,16 @@ import sys
 
 
 def main(argv: list[str] | None = None) -> int:
+    from . import __version__
     from .paths import leave_extract_dir
 
     leave_extract_dir()
     parser = argparse.ArgumentParser(description="ClipKit OBS clipping setup")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"ClipKit {__version__}",
+    )
     parser.add_argument(
         "--detect",
         action="store_true",
