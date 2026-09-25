@@ -43,27 +43,30 @@ from .presets import (
 from .diagnostics import log, log_exception
 from .settings import binds_from_settings, load_settings, save_settings, settings_from_app
 
-# --- ClipKit design system (dark slate + indigo accent) ---
-BG = "#0e1017"          # app background
-PANEL = "#171a22"       # card surface
-SURFACE = "#1e222c"     # inputs / segmented tracks
-RAISED = "#272c38"      # hover / secondary buttons
-BRIGHT = "#333a49"      # active hover
-BORDER = "#252b39"      # subtle hairline
-TEXT = "#eef1f8"        # primary text
-MUTED = "#98a1b5"       # secondary text
-PRIMARY = "#a5b4fc"     # accent text on dark
-PRIMARY_BTN = "#6366f1" # accent fill (primary actions / selected)
+# --- ClipKit design system: near-black with soft elevation + one violet accent ---
+BG = "#08090d"          # app background (near black)
+PANEL = "#14161d"       # elevated card (no border, reads via contrast)
+PANEL_HEAD = "#171922"  # slightly lighter card header band
+SURFACE = "#1b1e27"     # inputs / segmented tracks
+RAISED = "#242732"      # hover / secondary buttons
+BRIGHT = "#2e323f"      # active hover
+BORDER = "#20232d"      # ultra-subtle hairline (used sparingly)
+TEXT = "#f3f4f8"        # primary text
+MUTED = "#8a90a1"       # secondary text
+FAINT = "#61667a"       # tertiary text
+PRIMARY = "#bcb4ff"     # accent text on dark
+PRIMARY_BTN = "#7c6cf6" # accent fill (primary actions / selected)
 ON_PRIMARY = "#ffffff"  # text on accent fill
 BLURPLE = PRIMARY_BTN
-BLURPLE_DIM = "#4f46e5"
-GREEN = "#34d399"
-AMBER = "#fbbf24"
+BLURPLE_DIM = "#6a5ae0"
+GREEN = "#3ecf8e"
+AMBER = "#f5a623"
 DANGER = "#f87171"
-KEY_BG = "#1e222c"
-ACCENT_SOFT = "#1b2036"  # tinted strip behind the live summary
-WARN_BG = "#2a2113"      # amber warning bar
+KEY_BG = "#1b1e27"
+ACCENT_SOFT = "#181630"  # tinted strip behind the live summary
+WARN_BG = "#2a2012"      # amber warning bar
 UI = "Segoe UI"
+UI_SEMI = "Segoe UI Semibold"
 MONO = "Cascadia Mono"
 
 
@@ -266,18 +269,17 @@ class ClipKitApp(tk.Tk):
 
     def _card(self, parent: tk.Misc, title: str, subtitle: str = "") -> tk.Frame:
         shell = tk.Frame(parent, bg=BG)
-        shell.pack(fill="both", expand=True, pady=(0, 14))
-        border = tk.Frame(shell, bg=BORDER)
-        border.pack(fill="both", expand=True)
-        content = tk.Frame(border, bg=PANEL)
-        content.pack(fill="both", expand=True, padx=1, pady=1)
+        shell.pack(fill="both", expand=True, pady=(0, 16))
+        # No boxy border — the card reads through soft elevation (PANEL vs BG).
+        content = tk.Frame(shell, bg=PANEL)
+        content.pack(fill="both", expand=True)
         head = tk.Frame(content, bg=PANEL)
-        head.pack(fill="x", padx=22, pady=(18, 10))
+        head.pack(fill="x", padx=24, pady=(20, 12))
         tk.Label(head, text=title, bg=PANEL, fg=TEXT, font=(UI, 15, "bold")).pack(anchor="w")
         if subtitle:
             tk.Label(
                 head, text=subtitle, bg=PANEL, fg=MUTED, font=(UI, 10), wraplength=440, justify="left"
-            ).pack(anchor="w", pady=(3, 0))
+            ).pack(anchor="w", pady=(4, 0))
         return content
 
     def _refresh_chips(self, store: dict, variable: tk.Variable) -> None:
@@ -413,7 +415,7 @@ class ClipKitApp(tk.Tk):
             font=(UI, 8, "bold"),
         )
         self._system_label_widget.pack(anchor="e")
-        tk.Label(right_meta, text=f"v{__version__}", bg=PANEL, fg=MUTED, font=(MONO, 9)).pack(anchor="e")
+        tk.Label(right_meta, text=f"v{__version__}", bg=PANEL, fg=FAINT, font=(UI, 9)).pack(anchor="e")
 
         self.warn_bar = tk.Frame(self, bg=WARN_BG)
         self.warn_label = tk.Label(
@@ -436,7 +438,7 @@ class ClipKitApp(tk.Tk):
         self._status_dot = tk.Label(status_wrap, text="●", bg=BG, fg=GREEN, font=(UI, 9))
         self._status_dot.pack(side="left", padx=(0, 8))
         tk.Label(
-            status_wrap, textvariable=self._status, bg=BG, fg=MUTED, font=(MONO, 9), wraplength=680, justify="left"
+            status_wrap, textvariable=self._status, bg=BG, fg=MUTED, font=(UI, 10), wraplength=680, justify="left"
         ).pack(side="left", fill="x", expand=True)
         self.apply_btn = tk.Button(
             bar,
@@ -538,10 +540,10 @@ class ClipKitApp(tk.Tk):
         summary_wrap.pack(fill="x", padx=22, pady=(2, 8))
         tk.Frame(summary_wrap, bg=PRIMARY_BTN, width=3).pack(side="left", fill="y")
         self.preset_copy = tk.Label(
-            summary_wrap, text="", bg=ACCENT_SOFT, fg=TEXT, font=(MONO, 9), wraplength=430,
+            summary_wrap, text="", bg=ACCENT_SOFT, fg=TEXT, font=(UI, 10), wraplength=440,
             justify="left",
         )
-        self.preset_copy.pack(side="left", anchor="w", padx=13, pady=10)
+        self.preset_copy.pack(side="left", anchor="w", padx=14, pady=12)
         self._chips(
             choices,
             "Clip length",
@@ -575,7 +577,7 @@ class ClipKitApp(tk.Tk):
             text="This game follows whatever you tab into. You do not open OBS to switch. Discord and browsers are ignored. Any fullscreen grabs whatever is fullscreen.",
             bg=PANEL,
             fg=MUTED,
-            font=(MONO, 8),
+            font=(UI, 9),
             wraplength=380,
             justify="left",
         ).pack(anchor="w", padx=20, pady=(0, 8))
@@ -603,7 +605,7 @@ class ClipKitApp(tk.Tk):
             text="Game audio on track 1, mic on track 2. ClipKit writes this mic into Settings → Audio. Desktop audio is disabled.",
             bg=PANEL,
             fg=MUTED,
-            font=(MONO, 8),
+            font=(UI, 9),
             wraplength=380,
             justify="left",
         ).pack(anchor="w", padx=20, pady=(0, 16))
@@ -626,7 +628,7 @@ class ClipKitApp(tk.Tk):
             text="Optional: Medal sorting renames Medal clips into the same kind of server or game folders.",
             bg=PANEL,
             fg=MUTED,
-            font=(MONO, 8),
+            font=(UI, 9),
             wraplength=380,
             justify="left",
         ).pack(anchor="w", padx=20, pady=(0, 8))
@@ -712,19 +714,16 @@ class ClipKitApp(tk.Tk):
         self._sync_mic_controls()
 
     def _make_pill(self, parent: tk.Misc, title: str, value: str, *, accent: bool = False) -> tk.Label:
-        bg = "#12241d" if accent else SURFACE
-        edge = GREEN if accent else BORDER
-        outer = tk.Frame(parent, bg=edge)
-        outer.pack(side="left", padx=(0, 10), pady=2, fill="x", expand=True)
-        box = tk.Frame(outer, bg=bg)
-        box.pack(fill="both", expand=True, padx=1, pady=1)
-        tk.Label(box, text=title.upper(), bg=bg, fg=GREEN if accent else MUTED, font=(UI, 7, "bold")).pack(
-            anchor="w", padx=13, pady=(10, 0)
+        bg = "#122a20" if accent else SURFACE
+        box = tk.Frame(parent, bg=bg)
+        box.pack(side="left", padx=(0, 10), pady=2, fill="x", expand=True)
+        tk.Label(box, text=title.upper(), bg=bg, fg=GREEN if accent else FAINT, font=(UI, 7, "bold")).pack(
+            anchor="w", padx=14, pady=(11, 0)
         )
         value_lbl = tk.Label(
-            box, text=value, bg=bg, fg=TEXT, font=(MONO, 10), wraplength=200, justify="left"
+            box, text=value, bg=bg, fg=TEXT, font=(UI, 10, "bold"), wraplength=200, justify="left"
         )
-        value_lbl.pack(anchor="w", padx=13, pady=(2, 10))
+        value_lbl.pack(anchor="w", padx=14, pady=(3, 11))
         return value_lbl
 
     def _add_hover(self, widget: tk.Button, base: str, hover: str) -> None:
