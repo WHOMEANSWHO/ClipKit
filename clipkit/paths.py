@@ -4,7 +4,32 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 from pathlib import Path
+
+
+def atomic_write_text(path: Path, text: str) -> None:
+    """Write a file in one step so a crash cannot leave it half-written.
+
+    The text goes to a temporary file in the same folder, is flushed to disk,
+    then atomically renamed over the target. A partially written temp file is
+    cleaned up on failure so it never shadows the real file.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f"{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
 
 
 def is_frozen() -> bool:

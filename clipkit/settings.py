@@ -3,36 +3,14 @@
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 from pathlib import Path
 
 from .keys import DEFAULT_BINDS, Hotkey, UserBinds
-from .paths import appdata_dir
+from .paths import appdata_dir, atomic_write_text
 from .presets import CLIP_LENGTHS, DEFAULT_BITRATE, FPS_CHOICES, PRESET_ORDER, RECORD_BITRATES
 
-
-def _atomic_write_text(path: Path, text: str) -> None:
-    """Write a file in one step so a crash cannot leave it half-written.
-
-    The text goes to a temporary file in the same folder, is flushed to disk,
-    then atomically renamed over the target. A partially written temp file is
-    cleaned up on failure so it never shadows the real settings file.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f"{path.name}.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
-            handle.write(text)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp_name, path)
-    except BaseException:
-        try:
-            os.unlink(tmp_name)
-        except OSError:
-            pass
-        raise
+# Backwards-compatible alias: settings used to define this locally.
+_atomic_write_text = atomic_write_text
 
 
 def settings_path() -> Path:
