@@ -146,6 +146,23 @@ def recommend_id(hw: Hardware) -> str:
     return "medium"
 
 
+def recommend_bitrate(output_width: int, output_height: int, fps: int) -> int:
+    """Suggest a record bitrate (kbps) that scales with resolution and frame rate.
+
+    OBS uses a flat 14 Mbps out of the box, which under-serves 1440p/4K and
+    over-serves 720p/30. This scales with pixels-per-second at roughly 0.1125
+    bits per pixel per frame (calibrated so 1080p60 lands on the 14 Mbps
+    default), then snaps to the nearest value ClipKit actually offers.
+    """
+    allowed = [kbps for kbps, _label in RECORD_BITRATES]
+    width = max(int(output_width or 0), 1)
+    height = max(int(output_height or 0), 1)
+    frames = max(int(fps or 0), 1)
+    raw_kbps = width * height * frames * 0.1125 / 1000
+    # Nearest allowed value; on a tie prefer the higher (better-quality) option.
+    return min(allowed, key=lambda value: (abs(value - raw_kbps), -value))
+
+
 def build_preset(
     hw: Hardware,
     preset_id: str,

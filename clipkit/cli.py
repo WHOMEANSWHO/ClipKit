@@ -74,7 +74,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.detect:
         from .hardware import detect
-        from .presets import all_presets, recommend_id
+        from .presets import all_presets, recommend_bitrate, recommend_id
 
         hw = detect()
         rec = recommend_id(hw)
@@ -99,6 +99,9 @@ def main(argv: list[str] | None = None) -> int:
                 f"{preset.bitrate_kbps} kbps "
                 f"{preset.replay_seconds // 60} min{mark}"
             )
+        rec_preset = presets[rec]
+        suggested = recommend_bitrate(rec_preset.output_width, rec_preset.output_height, rec_preset.fps)
+        print(f"Suggested bitrate: {suggested // 1000} Mbps (for {rec})")
         for note in hw.notes:
             print(f"note: {note}")
         return 0

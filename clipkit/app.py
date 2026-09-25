@@ -36,6 +36,7 @@ from .presets import (
     RECORD_BITRATES,
     Preset,
     all_presets,
+    recommend_bitrate,
     recommend_id,
 )
 from .settings import binds_from_settings, load_settings, save_settings, settings_from_app
@@ -833,6 +834,19 @@ class ClipKitApp(tk.Tk):
         recommended = recommend_id(hw)
         if not self._settings_restored:
             self._preset_id.set(recommended)
+            rec_preset = self._presets.get(recommended)
+            if rec_preset is not None:
+                suggested = recommend_bitrate(
+                    rec_preset.output_width, rec_preset.output_height, int(self._fps.get())
+                )
+                if suggested != int(self._bitrate.get()):
+                    self._bitrate.set(suggested)
+                    self._presets = all_presets(
+                        hw,
+                        replay_seconds=int(self._clip_seconds.get()),
+                        fps=int(self._fps.get()),
+                        bitrate_kbps=suggested,
+                    )
             self._settings_restored = True
         for store, variable in self._chip_groups:
             self._refresh_chips(store, variable)

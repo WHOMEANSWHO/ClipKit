@@ -8,10 +8,14 @@ from clipkit.hardware import Hardware
 from clipkit.presets import (
     DEFAULT_BITRATE,
     PRESET_ORDER,
+    RECORD_BITRATES,
     all_presets,
     build_preset,
+    recommend_bitrate,
     recommend_id,
 )
+
+ALLOWED_BITRATES = {kbps for kbps, _label in RECORD_BITRATES}
 
 
 def _hw(**kwargs) -> Hardware:
@@ -88,6 +92,31 @@ def test_build_preset_coerces_bad_bitrate_to_default():
     hw = _hw()
     preset = build_preset(hw, "low", bitrate_kbps=999999)
     assert preset.bitrate_kbps == DEFAULT_BITRATE
+
+
+def test_recommend_bitrate_matches_default_at_1080p60():
+    assert recommend_bitrate(1920, 1080, 60) == DEFAULT_BITRATE
+
+
+def test_recommend_bitrate_scales_up_for_1440p60():
+    assert recommend_bitrate(2560, 1440, 60) == 25000
+
+
+def test_recommend_bitrate_scales_down_for_1080p30():
+    assert recommend_bitrate(1920, 1080, 30) == 8000
+
+
+def test_recommend_bitrate_caps_at_offered_maximum_for_4k():
+    assert recommend_bitrate(3840, 2160, 60) == 25000
+
+
+def test_recommend_bitrate_always_returns_an_offered_value():
+    for width, height, fps in [(1280, 720, 30), (1920, 1080, 60), (2560, 1440, 30), (3840, 2160, 60)]:
+        assert recommend_bitrate(width, height, fps) in ALLOWED_BITRATES
+
+
+def test_recommend_bitrate_handles_bad_input():
+    assert recommend_bitrate(0, 0, 0) in ALLOWED_BITRATES
 
 
 def test_all_presets_covers_every_tier():
