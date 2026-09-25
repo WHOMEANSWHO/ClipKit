@@ -119,7 +119,8 @@ def reveal_in_explorer(path: Path) -> Path:
 
     path = Path(path)
     if path.is_file():
-        subprocess.Popen(["explorer", f"/select,{path}"], close_fds=True)
+        # Quoting is required when the path has spaces; /select,"C:\path with space\file.mp4"
+        subprocess.Popen(["explorer", f'/select,"{path}"'], close_fds=True)
         return path
     folder = ensure_clips_dir(path)
     os.startfile(os.fsdecode(folder))

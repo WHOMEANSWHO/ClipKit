@@ -115,6 +115,47 @@ def videos_dir() -> Path:
     return Path.home() / "Videos"
 
 
+def appdata_dir() -> Path:
+    """%APPDATA% (Roaming), with a home fallback when the env var is missing."""
+    raw = (os.environ.get("APPDATA") or "").strip()
+    if raw:
+        return Path(raw)
+    return Path.home() / "AppData" / "Roaming"
+
+
+def local_appdata_dir() -> Path:
+    """%LOCALAPPDATA%, with a home fallback when the env var is missing."""
+    raw = (os.environ.get("LOCALAPPDATA") or "").strip()
+    if raw:
+        return Path(raw)
+    return Path.home() / "AppData" / "Local"
+
+
+def same_path(left: Path | str | None, right: Path | str | None) -> bool:
+    """True when two paths point at the same place (case/slash-insensitive on Windows)."""
+    if left is None or right is None:
+        return False
+    a = str(left).strip()
+    b = str(right).strip()
+    if not a or not b:
+        return False
+
+    def _norm(text: str) -> str:
+        text = text.replace("\\", "/")
+        while "//" in text:
+            text = text.replace("//", "/")
+        if len(text) > 1 and text.endswith("/"):
+            text = text.rstrip("/")
+        return text.lower()
+
+    if _norm(a) == _norm(b):
+        return True
+    try:
+        return _norm(str(Path(a).resolve())) == _norm(str(Path(b).resolve()))
+    except OSError:
+        return False
+
+
 def ensure_directory(path: Path) -> Path:
     """Create a folder (and parents). Raises OSError if it cannot be made."""
     path = Path(path)

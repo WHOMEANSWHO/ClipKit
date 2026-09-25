@@ -10,7 +10,7 @@ import winreg
 from pathlib import Path
 
 from . import __version__
-from .paths import is_frozen
+from .paths import is_frozen, local_appdata_dir
 from .startup import create_shortcut, start_menu_dir
 
 UNINSTALL_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\ClipKit"
@@ -22,8 +22,7 @@ LEGACY_START_LINK = "ClipKit.lnk"
 
 
 def install_dir() -> Path:
-    local = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
-    return local / "Programs" / "ClipKit"
+    return local_appdata_dir() / "Programs" / "ClipKit"
 
 
 def installed_exe() -> Path:

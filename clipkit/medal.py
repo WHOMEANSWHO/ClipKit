@@ -10,7 +10,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from .paths import scripts_dir
+from .paths import appdata_dir, ensure_clips_dir, local_appdata_dir, scripts_dir
 from .startup import create_shortcut, windows_startup_dir
 
 STARTUP_NAME = "ClipKit Medal sorter.lnk"
@@ -27,7 +27,7 @@ SKIP_PATH_HINTS = (
 
 
 def clipkit_data_dir() -> Path:
-    path = Path.home() / "AppData" / "Roaming" / "ClipKit"
+    path = appdata_dir() / "ClipKit"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -46,10 +46,10 @@ def powershell_exe() -> Path:
 
 
 def find_medal_exe() -> Path | None:
-    local = Path.home() / "AppData" / "Local" / "Medal" / "Medal.exe"
+    local = local_appdata_dir() / "Medal" / "Medal.exe"
     if local.is_file():
         return local
-    programs = Path.home() / "AppData" / "Local" / "Programs" / "Medal" / "Medal.exe"
+    programs = local_appdata_dir() / "Programs" / "Medal" / "Medal.exe"
     if programs.is_file():
         return programs
     return None
@@ -60,12 +60,16 @@ def medal_is_installed() -> bool:
 
 
 def default_medal_folders() -> list[Path]:
+    """Known Medal capture folders that already exist on this PC."""
+    from .paths import videos_dir
+
     folders: list[Path] = []
     for path in (
-        Path(r"D:\vids\medal"),
-        Path(r"C:\Medal"),
+        videos_dir() / "Medal",
         Path.home() / "Videos" / "Medal",
+        Path(r"C:\Medal"),
         Path(r"D:\Medal"),
+        Path(r"D:\vids\medal"),
     ):
         if path.is_dir() and path not in folders:
             folders.append(path)
@@ -95,10 +99,11 @@ def _paths_from_json_file(path: Path) -> list[Path]:
 
 
 def find_medal_capture_folders() -> list[Path]:
+    """Return Medal capture folders that exist. Empty when none are found."""
     folders = default_medal_folders()
     search_roots = (
-        Path.home() / "AppData" / "Roaming" / "Medal" / "store",
-        Path.home() / "AppData" / "Local" / "Medal",
+        appdata_dir() / "Medal" / "store",
+        local_appdata_dir() / "Medal",
     )
     discovered: list[Path] = []
     for root in search_roots:
@@ -118,7 +123,7 @@ def find_medal_capture_folders() -> list[Path]:
         if path not in folders:
             folders.append(path)
     if not folders:
-        return [Path(r"D:\vids\medal")]
+        return []
     folders.sort(
         key=lambda path: (
             (path / "Clips").is_dir(),
@@ -241,12 +246,13 @@ def write_medal_sorter_config(output_dir: Path, watch: list[Path] | None = None)
 
 
 def install_medal_sorter(output_dir: Path | None = None) -> dict:
-    """Copy the watcher into AppData, start it, and keep it on Windows Startup."""
-    from .paths import ensure_clips_dir
+    """Copy the watcher into AppData, start it, and keep it on Windows Startup.
 
+    Watch folders are Medal capture dirs that already exist. Output is the user's
+    clips folder (never invented as D:\\vids\\medal).
+    """
     watch = find_medal_capture_folders()
-    dest = watch[0] if watch else Path(output_dir or r"D:\vids\medal")
-    dest = ensure_clips_dir(dest)
+    dest = ensure_clips_dir(output_dir)
     source = scripts_dir() / SORTER_SCRIPT
     if not source.is_file():
         raise FileNotFoundError(f"Medal sorter script is missing: {source}")
@@ -256,7 +262,7 @@ def install_medal_sorter(output_dir: Path | None = None) -> dict:
         seen.unlink(missing_ok=True)
     except OSError:
         pass
-    config = write_medal_sorter_config(dest, watch=[dest])
+    config = write_medal_sorter_config(dest, watch=watch)
     stop_medal_sorter()
     started = start_medal_sorter()
     startup = install_medal_startup()

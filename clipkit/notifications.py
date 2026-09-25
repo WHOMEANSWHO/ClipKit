@@ -6,7 +6,7 @@ import subprocess
 import winreg
 from pathlib import Path
 
-from .paths import icon_file
+from .paths import appdata_dir, icon_file
 from .startup import create_shortcut, start_menu_dir
 
 AUMID = "ClipKit.Clips"
@@ -149,7 +149,7 @@ def install_toast_identity(obs_exe: Path | None, *, refresh_shortcut: bool = Fal
     powershell = Path(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe")
     if not powershell.is_file():
         return
-    hidden = Path.home() / "AppData" / "Roaming" / "ClipKit" / TOAST_SHORTCUT
+    hidden = appdata_dir() / "ClipKit" / TOAST_SHORTCUT
     created = create_shortcut(
         hidden,
         powershell,

@@ -14,7 +14,7 @@ from .audio import list_capture_devices, resolve_microphone
 from .install_obs import find_obs_exe
 from .keys import DEFAULT_BINDS, Hotkey, UserBinds
 from .notifications import install_toast_identity
-from .paths import ensure_clips_dir, scripts_dir, videos_dir
+from .paths import appdata_dir, ensure_clips_dir, scripts_dir, videos_dir
 from .presets import Preset
 from .startup import install_obs_windows_startup, remove_obs_windows_startup
 
@@ -24,17 +24,15 @@ SCENE_NAME = "ClipKit"
 TRACK_GAME = 1
 TRACK_MIC = 2
 REC_TRACKS_GAME_AND_MIC = TRACK_GAME | TRACK_MIC
+_RECORDING_HOTKEYS = ("OBSBasic.StartRecording", "OBSBasic.StopRecording")
 
 
 def default_output_dir() -> Path:
-    existing = Path("D:/vids/obs")
-    if existing.is_dir():
-        return existing
     return videos_dir() / "ClipKit"
 
 
 def obs_config_dir() -> Path:
-    return Path.home() / "AppData" / "Roaming" / "obs-studio"
+    return appdata_dir() / "obs-studio"
 
 
 def obs_is_configured() -> bool:
@@ -62,6 +60,13 @@ def _write_profile(path: Path, text: str) -> None:
             parser.add_section(section)
         for key, value in incoming.items(section):
             parser.set(section, key, value)
+    # Drop stale recording hotkeys when the new profile omits them.
+    if parser.has_section("Hotkeys") and not (
+        incoming.has_section("Hotkeys") and incoming.has_option("Hotkeys", "OBSBasic.StartRecording")
+    ):
+        for key in _RECORDING_HOTKEYS:
+            if parser.has_option("Hotkeys", key):
+                parser.remove_option("Hotkeys", key)
     if not parser.has_section("General"):
         parser.add_section("General")
     parser.set("General", "Name", PROFILE_NAME)
@@ -748,6 +753,12 @@ def apply_setup(
     enable_recording: bool = True,
     start_with_windows: bool = False,
 ) -> dict:
+    """Write the ClipKit OBS profile, scene, scripts, and optional Windows startup.
+
+    ``make_default`` is kept for callers (CLI / tests). ClipKit always selects the
+    ClipKit profile and scene collection via ``_update_user_ini``.
+    """
+    del make_default  # Always selects ClipKit as the active profile/collection.
     binds = binds or DEFAULT_BINDS
     capture = "any" if capture == "any" else "window"
     config_dir = Path(config_dir) if config_dir else obs_config_dir()
@@ -827,7 +838,6 @@ def apply_setup(
         "save_hotkey": binds.save.label,
         "clip_toggle": binds.replay_toggle.label,
         "record_toggle": binds.record_toggle.label if enable_recording else "off",
-        "start_hotkey": binds.replay_toggle.label,
         "mic": mic_name if binds.mic_mode != "off" else "off",
         "mic_device_id": mic_device_id,
         "ptt": (

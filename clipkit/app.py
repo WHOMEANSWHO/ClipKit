@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import time
 import traceback
 from pathlib import Path
 import tkinter as tk
@@ -11,7 +12,7 @@ from tkinter import filedialog, messagebox, ttk
 from . import __version__
 from .audio import pick_microphone, usable_microphones
 from .hardware import Hardware, detect, load_cached_hardware, obs_is_running
-from .health import probe, reveal_in_explorer
+from .health import newest_clip, probe, reveal_in_explorer
 from .install_obs import (
     find_obs_exe,
     fresh_install_obs,
@@ -25,7 +26,7 @@ from .install_obs import (
 from .keys import DEFAULT_BINDS, Hotkey, UserBinds, from_tk, mouse_button_held
 from .medal import disable_medal_sorter, install_medal_sorter
 from .obs import PROFILE_NAME, apply_setup, default_output_dir
-from .paths import icon_file, mark_file
+from .paths import icon_file, mark_file, same_path
 from .presets import (
     CLIP_LENGTHS,
     DEFAULT_BITRATE,
@@ -163,6 +164,7 @@ class ClipKitApp(tk.Tk):
         self._enable_recording = tk.BooleanVar(value=True)
         self._sort_medal = tk.BooleanVar(value=False)
         self._status = tk.StringVar(value="Detecting your PC…")
+        self._system_label = tk.StringVar(value="Detecting…")
         self._busy = False
         self._chip_groups: list[tuple[dict, tk.Variable]] = []
         self._quality_chips: dict = {}
@@ -380,7 +382,14 @@ class ClipKitApp(tk.Tk):
         ).pack(anchor="w")
         right_meta = tk.Frame(bar, bg=PANEL)
         right_meta.pack(side="right")
-        tk.Label(right_meta, text="SYSTEM READY", bg=PANEL, fg=GREEN, font=(UI, 8, "bold")).pack(anchor="e")
+        self._system_label_widget = tk.Label(
+            right_meta,
+            textvariable=self._system_label,
+            bg=PANEL,
+            fg=GREEN,
+            font=(UI, 8, "bold"),
+        )
+        self._system_label_widget.pack(anchor="e")
         tk.Label(right_meta, text=f"v{__version__}", bg=PANEL, fg=MUTED, font=(MONO, 9)).pack(anchor="e")
 
         self.warn_bar = tk.Frame(self, bg="#3d2a12")
@@ -573,7 +582,7 @@ class ClipKitApp(tk.Tk):
         save = self._card(
             left,
             "Clips folder",
-            "Medal clips in D:\\vids\\medal get a folder per server or game, then rename to Name Clip date time.",
+            "OBS clips land here in a folder per FiveM server or game, named like Clip_Server_date_time.mp4.",
         )
         path_row = tk.Frame(save, bg=PANEL)
         path_row.pack(fill="x", padx=20, pady=(4, 8))
@@ -585,7 +594,7 @@ class ClipKitApp(tk.Tk):
         ttk.Button(path_row, text="Browse", style="Ghost.TButton", command=self._browse).pack(side="left", padx=(8, 0))
         tk.Label(
             save,
-            text="If you clip with Medal, each clip is renamed into a server or game folder: Arena Clip 20-08-26 16-08-00.mp4",
+            text="Optional: Medal sorting renames Medal clips into the same kind of server or game folders.",
             bg=PANEL,
             fg=MUTED,
             font=(MONO, 8),
@@ -891,12 +900,14 @@ class ClipKitApp(tk.Tk):
                 self.apply_btn.configure(text="Apply to OBS")
             if update_status or (changed and not self._busy):
                 self._status.set("Ready. Pick your options, then Apply.")
+                self._set_system_label("Ready", color=GREEN)
             return
         self._pill_obs.configure(text="Will install", fg=AMBER)
         if not self._busy:
             self.apply_btn.configure(text="Install OBS and set up")
         if update_status or (changed and not self._busy):
             self._status.set("OBS is missing. Apply will download the official installer, then configure it.")
+            self._set_system_label("OBS missing", color=AMBER)
 
     def _poll_obs(self) -> None:
         if not self._busy:
@@ -914,6 +925,12 @@ class ClipKitApp(tk.Tk):
         if chosen:
             self._output.set(chosen)
 
+    def _set_system_label(self, text: str, *, color: str = GREEN) -> None:
+        self._system_label.set(text)
+        widget = getattr(self, "_system_label_widget", None)
+        if widget is not None:
+            widget.configure(fg=color)
+
     def _open_clips_folder(self) -> None:
         folder = self._output.get().strip()
         if not folder:
@@ -921,7 +938,7 @@ class ClipKitApp(tk.Tk):
             return
         try:
             opened = reveal_in_explorer(Path(folder))
-            if str(opened) != folder:
+            if not same_path(opened, folder):
                 self._output.set(str(opened))
         except OSError as exc:
             messagebox.showerror("Clips folder", f"Could not open that folder.\n\n{exc}")
@@ -952,11 +969,17 @@ class ClipKitApp(tk.Tk):
 
     def _medal_setup_done(self, result: dict) -> None:
         self._persist_settings()
+        used = str(result.get("output_dir") or "").strip()
+        if used and not same_path(used, self._output.get()):
+            self._output.set(used)
         self._set_busy(False, "Medal clips will be renamed into server or game folders.")
         watch = result.get("watch_existing") or result.get("watch") or []
-        watch_line = ", ".join(str(path) for path in watch) if watch else r"D:\vids\medal"
+        if watch:
+            watch_line = ", ".join(str(path) for path in watch)
+        else:
+            watch_line = "no Medal capture folder found yet — add one after Medal is installed"
         started = "on" if result.get("started") else "not running yet — it starts with Windows"
-        dest = result.get("output_dir", watch_line)
+        dest = result.get("output_dir") or self._output.get().strip()
         messagebox.showinfo(
             "Medal sorting is on",
             "\n".join(
@@ -965,7 +988,7 @@ class ClipKitApp(tk.Tk):
                     "then renames the clip to: Server Clip date time.mp4",
                     "",
                     f"Watching: {watch_line}",
-                    f"Example: {dest}\\Arena\\Arena Clip 20-08-26 16-08-00.mp4",
+                    f"Sorted clips go to: {dest}",
                     f"Sorter: {started}",
                     "Starts with Windows: yes" if result.get("startup") else "Starts with Windows: could not create the shortcut",
                     "",
@@ -987,12 +1010,29 @@ class ClipKitApp(tk.Tk):
                 "Open OBS on the ClipKit profile first (Apply if you have not), then click Test clip.",
             )
             return
+        before = time.time()
         try:
-            reveal_in_explorer(Path(folder))
+            opened = reveal_in_explorer(Path(folder))
+            if not same_path(opened, folder):
+                self._output.set(str(opened))
+                folder = str(opened)
         except OSError as exc:
             messagebox.showerror("Clips folder", f"Could not open that folder.\n\n{exc}")
             return
         save_label = self.save_bind.hotkey.label
+        # Prefer highlighting a clip that already exists in the folder.
+        clip = newest_clip(Path(folder), after=0.0) or newest_clip(Path(folder), after=before - 2.0)
+        if clip is not None:
+            try:
+                reveal_in_explorer(clip)
+            except OSError:
+                pass
+            self._status.set(f"Newest clip: {clip.name}")
+            messagebox.showinfo(
+                "Test clip",
+                f"Found a recent clip:\n{clip}\n\nPress {save_label} in OBS to save another.",
+            )
+            return
         self._status.set(f"Clips folder opened. Press {save_label} in OBS to save a clip.")
         messagebox.showinfo(
             "Test clip",
@@ -1191,7 +1231,7 @@ class ClipKitApp(tk.Tk):
     def _poll_health(self) -> None:
         if not self.winfo_exists():
             return
-        info = probe()
+        info = probe(expect_replay=self._health_expect_replay)
         reveal_obs_window()
         self._health_tries += 1
         if not info.get("ok") and self._health_tries < 40:
@@ -1208,12 +1248,15 @@ class ClipKitApp(tk.Tk):
         bitrate = int(result.get("bitrate_kbps") or (preset.bitrate_kbps if preset else self._bitrate.get()))
         health_text, ok = self._health_verdict(info)
         if ok:
+            self._set_system_label("Ready", color=GREEN)
             self._status.set(
                 f"OBS is on ClipKit with clipping on. Press {result.get('save_hotkey', 'Save')} to save the last {length}."
             )
         elif info["obs"] == "open":
+            self._set_system_label("Check OBS", color=AMBER)
             self._status.set("OBS opened. Check the health check — clipping may still be starting.")
         else:
+            self._set_system_label("Open OBS", color=AMBER)
             self._status.set(
                 f"Done. Open OBS, then press {result.get('save_hotkey', 'Save')} to save the last {length}."
             )
@@ -1276,7 +1319,7 @@ class ClipKitApp(tk.Tk):
                 start_with_windows=self._start_with_windows.get(),
             )
             used = str(result.get("output_dir") or "").strip()
-            if used and used != self._output.get().strip():
+            if used and not same_path(used, self._output.get()):
                 self._output.set(used)
             if self._sort_medal.get():
                 try:
@@ -1304,9 +1347,10 @@ class ClipKitApp(tk.Tk):
         self._health_tries = 0
         if launched:
             self._set_busy(True, "Checking OBS… is the ClipKit profile open?")
+            self._set_system_label("Checking…", color=AMBER)
             self.after(500, self._poll_health)
             return
-        info = probe()
+        info = probe(expect_replay=self._health_expect_replay)
         self._set_busy(False)
         self._show_apply_result(result, info)
 
