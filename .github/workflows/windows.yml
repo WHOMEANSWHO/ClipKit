@@ -51,7 +51,11 @@ jobs:
           }
           $scene = Get-Content (Join-Path $dir "basic\scenes\ClipKit.json") -Raw | ConvertFrom-Json
           if ($scene.name -ne "ClipKit") { throw "Scene collection name is '$($scene.name)', expected 'ClipKit'" }
-          Write-Host "dry-run profile verified"
+          $basic = Get-Content (Join-Path $dir "basic\profiles\ClipKit\basic.ini") -Raw
+          if ($basic -notmatch "VBitrate=\d+") { throw "basic.ini is missing a VBitrate value" }
+          $log = Join-Path $env:APPDATA "ClipKit\clipkit.log"
+          if (-not (Test-Path $log)) { throw "Diagnostics log was not written: $log" }
+          Write-Host "dry-run profile + diagnostics log verified"
 
       - name: Build ClipKit.exe
         run: python build.py
