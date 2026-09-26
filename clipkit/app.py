@@ -7,12 +7,12 @@ import time
 import traceback
 from pathlib import Path
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, font as tkfont, messagebox, ttk
 
 from . import __version__
 from .audio import pick_microphone, usable_microphones
 from .hardware import Hardware, detect, load_cached_hardware, obs_is_running
-from .health import newest_clip, probe, reveal_in_explorer
+from .health import newest_clip, probe, reveal_in_explorer, verify_apply
 from .install_obs import (
     find_obs_exe,
     fresh_install_obs,
@@ -25,7 +25,13 @@ from .install_obs import (
 )
 from .keys import DEFAULT_BINDS, Hotkey, UserBinds, from_tk, mouse_button_held
 from .medal import disable_medal_sorter, install_medal_sorter
-from .obs import PROFILE_NAME, apply_setup, default_output_dir
+from .obs import (
+    PROFILE_NAME,
+    apply_setup,
+    clipkit_profile_exists,
+    default_output_dir,
+    next_clipkit_profile_name,
+)
 from .paths import icon_file, mark_file, same_path
 from .presets import (
     CLIP_LENGTHS,
@@ -36,58 +42,351 @@ from .presets import (
     RECORD_BITRATES,
     Preset,
     all_presets,
+    av1_supported,
+    estimated_clip_mb,
+    recommend_bitrate,
     recommend_id,
 )
+from .diagnostics import log, log_exception
 from .settings import binds_from_settings, load_settings, save_settings, settings_from_app
 
-BG = "#0b1326"
-PANEL = "#171f33"
-SURFACE = "#131b2e"
-RAISED = "#222a3d"
-BRIGHT = "#31394d"
-BORDER = "#464555"
-TEXT = "#dae2fd"
-MUTED = "#c7c4d8"
-PRIMARY = "#c3c0ff"
-PRIMARY_BTN = "#4f46e5"
-ON_PRIMARY = "#1d00a5"
+# --- ClipKit design system: near-black with soft elevation + one violet accent ---
+BG = "#08090d"          # app background (near black)
+PANEL = "#14161d"       # elevated card (no border, reads via contrast)
+PANEL_HEAD = "#171922"  # slightly lighter card header band
+SURFACE = "#1b1e27"     # inputs / segmented tracks
+RAISED = "#242732"      # hover / secondary buttons
+BRIGHT = "#2e323f"      # active hover
+BORDER = "#20232d"      # ultra-subtle hairline (used sparingly)
+TEXT = "#f3f4f8"        # primary text
+MUTED = "#8a90a1"       # secondary text
+FAINT = "#61667a"       # tertiary text
+PRIMARY = "#bcb4ff"     # accent text on dark
+PRIMARY_BTN = "#7c6cf6" # accent fill (primary actions / selected)
+ON_PRIMARY = "#ffffff"  # text on accent fill
 BLURPLE = PRIMARY_BTN
-BLURPLE_DIM = "#3323cc"
-GREEN = "#4edea3"
-AMBER = "#ffb95f"
-KEY_BG = "#31394d"
+BLURPLE_DIM = "#6a5ae0"
+GREEN = "#3ecf8e"
+AMBER = "#f5a623"
+DANGER = "#f87171"
+KEY_BG = "#1b1e27"
+ACCENT_SOFT = "#181630"  # tinted strip behind the live summary
+WARN_BG = "#2a2012"      # amber warning bar
 UI = "Segoe UI"
+UI_SEMI = "Segoe UI Semibold"
 MONO = "Cascadia Mono"
 
+try:
+    from PIL import Image, ImageDraw, ImageTk
 
-class KeybindButton(tk.Button):
-    def __init__(self, parent: tk.Misc, initial: Hotkey, *, on_change=None) -> None:
-        super().__init__(
-            parent,
-            text=initial.label,
-            command=self._listen,
-            bg=KEY_BG,
-            fg=TEXT,
-            activebackground=PRIMARY,
-            activeforeground=ON_PRIMARY,
-            disabledforeground=MUTED,
-            relief="raised",
-            bd=1,
-            padx=12,
-            pady=4,
-            font=(MONO, 10),
-            cursor="hand2",
-            highlightthickness=0,
+    _HAS_PIL = True
+except Exception:  # noqa: BLE001 - UI rounding is optional; fall back to flat
+    _HAS_PIL = False
+
+
+def _rgba(color: str, alpha: int = 255) -> tuple[int, int, int, int]:
+    color = color.lstrip("#")
+    return (int(color[0:2], 16), int(color[2:4], 16), int(color[4:6], 16), alpha)
+
+
+_IMG_CACHE: dict = {}
+
+
+def _rounded_photo(width: int, height: int, radius: int, fill: str,
+                   outline: str | None = None, outline_w: int = 0):
+    """Anti-aliased rounded-rectangle image (cached). None when Pillow is absent."""
+    if not _HAS_PIL or width < 2 or height < 2:
+        return None
+    key = (width, height, radius, fill, outline, outline_w)
+    cached = _IMG_CACHE.get(key)
+    if cached is not None:
+        return cached
+    scale = 2  # supersample for crisp edges
+    img = Image.new("RGBA", (width * scale, height * scale), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    draw.rounded_rectangle(
+        [0, 0, width * scale - 1, height * scale - 1],
+        radius=radius * scale,
+        fill=_rgba(fill),
+        outline=_rgba(outline) if outline else None,
+        width=outline_w * scale,
+    )
+    img = img.resize((width, height), Image.LANCZOS)
+    photo = ImageTk.PhotoImage(img)
+    _IMG_CACHE[key] = photo
+    return photo
+
+
+class RoundedCard(tk.Frame):
+    """A container with anti-aliased rounded corners; pack children into `.body`."""
+
+    def __init__(self, parent: tk.Misc, *, radius: int = 16, fill: str = PANEL,
+                 outline: str | None = None, outline_w: int = 0) -> None:
+        bg = parent.cget("bg")
+        super().__init__(parent, bg=bg)
+        self._radius = radius
+        self._fill = fill
+        self._outline = outline
+        self._outline_w = outline_w
+        self._canvas = tk.Canvas(self, bg=bg, highlightthickness=0, bd=0)
+        self._canvas.place(x=0, y=0, relwidth=1, relheight=1)
+        pad = max(4, radius // 3)
+        self.body = tk.Frame(self, bg=fill)
+        self.body.pack(fill="both", expand=True, padx=pad, pady=pad)
+        self._img = None
+        self._size = (0, 0)
+        self.bind("<Configure>", self._on_configure)
+
+    def _on_configure(self, event) -> None:
+        size = (event.width, event.height)
+        if size == self._size or event.width < 4 or event.height < 4:
+            return
+        self._size = size
+        photo = _rounded_photo(
+            event.width, event.height, self._radius, self._fill,
+            self._outline, self._outline_w,
         )
+        if photo is None:
+            self._canvas.configure(bg=self._fill)  # flat fallback
+            return
+        self._img = photo
+        self._canvas.delete("all")
+        self._canvas.create_image(0, 0, anchor="nw", image=self._img)
+
+
+class RoundedButton(tk.Canvas):
+    """A rounded, anti-aliased button that stays drop-in for tk.Button calls."""
+
+    def __init__(self, parent: tk.Misc, text: str, command=None, *, fill: str, fg: str,
+                 hover: str | None = None, font=(UI, 11, "bold"), radius: int = 10,
+                 padx: int = 20, pady: int = 11) -> None:
+        super().__init__(parent, bg=parent.cget("bg"), highlightthickness=0, bd=0, cursor="hand2")
+        self._text = text
+        self._command = command
+        self._fill = fill
+        self._fg = fg
+        self._hover = hover or fill
+        self._font = font
+        self._radius = radius
+        self._padx = padx
+        self._pady = pady
+        self._state = "normal"
+        self._hovering = False
+        self._img = None
+        self._measure()
+        self.bind("<Configure>", lambda _e: self._redraw())
+        self.bind("<Button-1>", self._on_click)
+        self.bind("<Enter>", self._on_enter)
+        self.bind("<Leave>", self._on_leave)
+
+    def _measure(self) -> None:
+        f = tkfont.Font(font=self._font)
+        w = f.measure(self._text) + self._padx * 2
+        h = f.metrics("linespace") + self._pady * 2
+        self.configure(width=w, height=h)
+
+    def _fill_now(self) -> str:
+        if self._state == "disabled":
+            return RAISED
+        return self._hover if self._hovering else self._fill
+
+    def _redraw(self) -> None:
+        w = self.winfo_width()
+        if w <= 1:
+            w = int(self["width"])
+        h = self.winfo_height()
+        if h <= 1:
+            h = int(self["height"])
+        self.delete("all")
+        photo = _rounded_photo(w, h, self._radius, self._fill_now())
+        if photo is not None:
+            self._img = photo
+            self.create_image(0, 0, anchor="nw", image=photo)
+        else:
+            # Flat fallback (Pillow missing or not yet sized). Draw a plain rectangle
+            # directly — never call self.configure() here, or it recurses into _redraw.
+            self.create_rectangle(0, 0, max(w, 1), max(h, 1), fill=self._fill_now(), outline="")
+        fg = MUTED if self._state == "disabled" else self._fg
+        self.create_text(w // 2, h // 2, text=self._text, fill=fg, font=self._font)
+
+    def _on_click(self, _e) -> None:
+        if self._state != "disabled" and self._command:
+            self._command()
+
+    def _on_enter(self, _e) -> None:
+        self._hovering = True
+        self._redraw()
+
+    def _on_leave(self, _e) -> None:
+        self._hovering = False
+        self._redraw()
+
+    def configure(self, **kw):  # type: ignore[override]
+        redraw = False
+        if "text" in kw:
+            self._text = kw.pop("text")
+            self._measure()
+            redraw = True
+        if "state" in kw:
+            self._state = str(kw.pop("state"))
+            redraw = True
+        if "bg" in kw:
+            self._fill = kw.pop("bg")
+            redraw = True
+        result = super().configure(**kw) if kw else None
+        if redraw:
+            self._redraw()
+        return result
+
+    config = configure
+
+    def cget(self, key):  # type: ignore[override]
+        if key == "state":
+            return self._state
+        return super().cget(key)
+
+    def __getitem__(self, key):
+        if key == "state":
+            return self._state
+        return super().__getitem__(key)
+
+
+class RoundedChip(tk.Canvas):
+    """One segment in a segmented control: rounded accent pill when selected."""
+
+    def __init__(self, parent: tk.Misc, text: str, value, command, *,
+                 radius: int = 9, font=(UI, 10, "bold")) -> None:
+        super().__init__(parent, bg=parent.cget("bg"), highlightthickness=0, bd=0, cursor="hand2")
+        self._text = text
+        self._value = value
+        self._command = command
+        self._font = font
+        self._radius = radius
+        self._selected = False
+        self._hovering = False
+        self._img = None
+        # Small base width so pack(fill=x, expand) shares the track evenly across segments.
+        self.configure(width=20, height=tkfont.Font(font=font).metrics("linespace") + 18)
+        self.bind("<Configure>", lambda _e: self._redraw())
+        self.bind("<Button-1>", lambda _e: self._command(self._value))
+        self.bind("<Enter>", lambda _e: self._set_hover(True))
+        self.bind("<Leave>", lambda _e: self._set_hover(False))
+
+    def _set_hover(self, hovering: bool) -> None:
+        self._hovering = hovering
+        self._redraw()
+
+    def set_selected(self, selected: bool) -> None:
+        self._selected = selected
+        self._redraw()
+
+    def set_text(self, text: str) -> None:
+        self._text = text
+        self._redraw()
+
+    def _redraw(self) -> None:
+        w = self.winfo_width() or 60
+        h = self.winfo_height() or 30
+        self.delete("all")
+        if self._selected:
+            fill = PRIMARY_BTN
+            fg = ON_PRIMARY
+        elif self._hovering:
+            fill = RAISED
+            fg = TEXT
+        else:
+            fill = None  # unselected: transparent, showing the track behind
+            fg = MUTED
+        if fill is not None:
+            photo = _rounded_photo(w, h, self._radius, fill)
+            if photo is not None:
+                self._img = photo
+                self.create_image(0, 0, anchor="nw", image=photo)
+            else:
+                self.create_rectangle(0, 0, max(w, 1), max(h, 1), fill=fill, outline="")
+        self.create_text(w // 2, h // 2, text=self._text, fill=fg, font=self._font)
+
+
+class KeybindButton(tk.Canvas):
+    """A rounded keycap. Click to capture the next key or mouse button."""
+
+    _PROMPT = "Press a key…"
+
+    def __init__(self, parent: tk.Misc, initial: Hotkey, *, on_change=None) -> None:
+        super().__init__(parent, bg=parent.cget("bg"), highlightthickness=0, bd=0, cursor="hand2")
         self.hotkey = initial
         self._on_change = on_change
+        self._font = (MONO, 10, "bold")
+        self._radius = 8
+        self._padx = 14
+        self._pady = 6
+        self._state = "normal"
         self._listening = False
+        self._hovering = False
+        self._img = None
+        self._measure()
+        self.bind("<Configure>", lambda _e: self._redraw())
+        self.bind("<Button-1>", self._on_click)
+        self.bind("<Enter>", self._on_enter)
+        self.bind("<Leave>", self._on_leave)
+
+    def _measure(self) -> None:
+        f = tkfont.Font(font=self._font)
+        # Size to the widest state so the keycap doesn't jump while listening.
+        width = max(f.measure(self.hotkey.label), f.measure(self._PROMPT)) + self._padx * 2
+        height = f.metrics("linespace") + self._pady * 2
+        self.configure(width=width, height=height)
+
+    def _fill_now(self) -> str:
+        if self._state == "disabled":
+            return SURFACE
+        if self._listening:
+            return PRIMARY_BTN
+        if self._hovering:
+            return RAISED
+        return KEY_BG
+
+    def _redraw(self) -> None:
+        w = self.winfo_width()
+        if w <= 1:
+            w = int(self["width"])
+        h = self.winfo_height()
+        if h <= 1:
+            h = int(self["height"])
+        self.delete("all")
+        photo = _rounded_photo(w, h, self._radius, self._fill_now())
+        if photo is not None:
+            self._img = photo
+            self.create_image(0, 0, anchor="nw", image=photo)
+        else:
+            self.create_rectangle(0, 0, max(w, 1), max(h, 1), fill=self._fill_now(), outline="")
+        text = self._PROMPT if self._listening else self.hotkey.label
+        if self._state == "disabled":
+            fg = FAINT
+        elif self._listening:
+            fg = ON_PRIMARY
+        else:
+            fg = TEXT
+        self.create_text(w // 2, h // 2, text=text, fill=fg, font=self._font)
+
+    def _on_enter(self, _e=None) -> None:
+        self._hovering = True
+        self._redraw()
+
+    def _on_leave(self, _e=None) -> None:
+        self._hovering = False
+        self._redraw()
+
+    def _on_click(self, _e=None) -> None:
+        if self._state == "disabled":
+            return
+        self._listen()
 
     def _listen(self) -> None:
         if self._listening:
             return
         self._listening = True
-        self.configure(text="Press a key…", bg=PRIMARY, fg=ON_PRIMARY, relief="flat")
+        self._redraw()
         self.bind_all("<KeyPress>", self._on_key)
         self.bind_all("<ButtonPress-2>", self._on_mouse)
         self.bind_all("<ButtonPress-3>", self._on_mouse)
@@ -113,7 +412,7 @@ class KeybindButton(tk.Button):
         self.unbind_all("<ButtonPress-4>")
         self.unbind_all("<ButtonPress-5>")
         self._listening = False
-        self.configure(text=self.hotkey.label, bg=KEY_BG, fg=TEXT, relief="raised")
+        self._redraw()
         if self._on_change:
             self._on_change()
 
@@ -137,7 +436,29 @@ class KeybindButton(tk.Button):
     def set_hotkey(self, hotkey: Hotkey) -> None:
         self.hotkey = hotkey
         if not self._listening:
-            self.configure(text=hotkey.label)
+            self._redraw()
+
+    def configure(self, **kw):  # type: ignore[override]
+        redraw = False
+        if "state" in kw:
+            self._state = str(kw.pop("state"))
+            redraw = True
+        result = super().configure(**kw) if kw else None
+        if redraw:
+            self._redraw()
+        return result
+
+    config = configure
+
+    def cget(self, key):  # type: ignore[override]
+        if key == "state":
+            return self._state
+        return super().cget(key)
+
+    def __getitem__(self, key):
+        if key == "state":
+            return self._state
+        return super().__getitem__(key)
 
 
 class ClipKitApp(tk.Tk):
@@ -163,6 +484,7 @@ class ClipKitApp(tk.Tk):
         self._start_with_windows = tk.BooleanVar(value=True)
         self._enable_recording = tk.BooleanVar(value=True)
         self._sort_medal = tk.BooleanVar(value=False)
+        self._use_av1 = tk.BooleanVar(value=False)
         self._status = tk.StringVar(value="Detecting your PC…")
         self._system_label = tk.StringVar(value="Detecting…")
         self._busy = False
@@ -173,6 +495,7 @@ class ClipKitApp(tk.Tk):
         self._health_tries = 0
         self._health_expect_replay = True
         self._health_apply_result: dict | None = None
+        self._active_profile = PROFILE_NAME
         self._obs_present: bool | None = None
         self._poll_n = 0
         self._detect_gen = 0
@@ -247,31 +570,22 @@ class ClipKitApp(tk.Tk):
         style.map("Ghost.TButton", background=[("active", RAISED)], foreground=[("active", PRIMARY)])
 
     def _card(self, parent: tk.Misc, title: str, subtitle: str = "") -> tk.Frame:
-        shell = tk.Frame(parent, bg=BG)
-        shell.pack(fill="both", expand=True, pady=(0, 12))
-        border = tk.Frame(shell, bg=BORDER)
-        border.pack(fill="both", expand=True)
-        inner = tk.Frame(border, bg=PANEL)
-        inner.pack(fill="both", expand=True, padx=1, pady=1)
-        tk.Frame(inner, bg=PRIMARY_BTN, height=2).pack(fill="x")
-        content = tk.Frame(inner, bg=PANEL)
-        content.pack(fill="both", expand=True)
+        card = RoundedCard(parent, radius=16, fill=PANEL)
+        card.pack(fill="both", expand=True, pady=(0, 16))
+        content = card.body
         head = tk.Frame(content, bg=PANEL)
-        head.pack(fill="x", padx=20, pady=(16, 8))
-        tk.Label(head, text=title, bg=PANEL, fg=TEXT, font=(UI, 16, "bold")).pack(anchor="w")
+        head.pack(fill="x", padx=22, pady=(18, 12))
+        tk.Label(head, text=title, bg=PANEL, fg=TEXT, font=(UI, 15, "bold")).pack(anchor="w")
         if subtitle:
             tk.Label(
-                head, text=subtitle, bg=PANEL, fg=MUTED, font=(UI, 10), wraplength=520, justify="left"
+                head, text=subtitle, bg=PANEL, fg=MUTED, font=(UI, 10), wraplength=440, justify="left"
             ).pack(anchor="w", pady=(4, 0))
         return content
 
     def _refresh_chips(self, store: dict, variable: tk.Variable) -> None:
         current = variable.get()
-        for value, (btn, _label) in store.items():
-            if value == current:
-                btn.configure(bg=PRIMARY, fg=ON_PRIMARY)
-            else:
-                btn.configure(bg=SURFACE, fg=MUTED)
+        for value, (chip, _label) in store.items():
+            chip.set_selected(value == current)
 
     def _chips(
         self,
@@ -282,14 +596,13 @@ class ClipKitApp(tk.Tk):
         command=None,
     ) -> dict:
         wrap = tk.Frame(parent, bg=PANEL)
-        wrap.pack(fill="x", padx=20, pady=(4, 12))
+        wrap.pack(fill="x", padx=22, pady=(4, 14))
         tk.Label(
-            wrap, text=title.upper(), bg=PANEL, fg=MUTED, font=(UI, 8, "bold")
+            wrap, text=title.upper(), bg=PANEL, fg=FAINT, font=(UI, 8, "bold")
         ).pack(anchor="w")
-        track = tk.Frame(wrap, bg=SURFACE, highlightbackground=BORDER, highlightthickness=1)
+        track = RoundedCard(wrap, radius=12, fill=SURFACE)
         track.pack(fill="x", pady=(8, 0))
-        row = tk.Frame(track, bg=SURFACE)
-        row.pack(fill="x", padx=4, pady=4)
+        row = track.body
         store: dict = {}
 
         def pick(value) -> None:
@@ -299,19 +612,9 @@ class ClipKitApp(tk.Tk):
                 command()
 
         for value, label in options:
-            btn = tk.Label(
-                row,
-                text=label,
-                bg=SURFACE,
-                fg=MUTED,
-                padx=14,
-                pady=8,
-                font=(UI, 10),
-                cursor="hand2",
-            )
-            btn.pack(side="left", padx=2, fill="x", expand=True)
-            btn.bind("<Button-1>", lambda _e, v=value: pick(v))
-            store[value] = (btn, label)
+            chip = RoundedChip(row, label, value, pick)
+            chip.pack(side="left", padx=2, pady=1, fill="x", expand=True)
+            store[value] = (chip, label)
         self._chip_groups.append((store, variable))
         self._refresh_chips(store, variable)
         if title == "Quality":
@@ -328,8 +631,8 @@ class ClipKitApp(tk.Tk):
         button.pack(side="right")
         return button
 
-    def _check(self, parent: tk.Misc, text: str, variable: tk.BooleanVar, command=None) -> None:
-        tk.Checkbutton(
+    def _check(self, parent: tk.Misc, text: str, variable: tk.BooleanVar, command=None) -> tk.Checkbutton:
+        widget = tk.Checkbutton(
             parent,
             text=text,
             variable=variable,
@@ -339,13 +642,16 @@ class ClipKitApp(tk.Tk):
             activebackground=PANEL,
             activeforeground=TEXT,
             selectcolor=SURFACE,
+            disabledforeground=FAINT,
             highlightthickness=0,
             bd=0,
             font=(UI, 10),
             anchor="w",
             padx=4,
             pady=4,
-        ).pack(anchor="w", padx=16, fill="x")
+        )
+        widget.pack(anchor="w", padx=16, fill="x")
+        return widget
 
     def _build(self) -> None:
         header = tk.Frame(self, bg=PANEL)
@@ -390,13 +696,13 @@ class ClipKitApp(tk.Tk):
             font=(UI, 8, "bold"),
         )
         self._system_label_widget.pack(anchor="e")
-        tk.Label(right_meta, text=f"v{__version__}", bg=PANEL, fg=MUTED, font=(MONO, 9)).pack(anchor="e")
+        tk.Label(right_meta, text=f"v{__version__}", bg=PANEL, fg=FAINT, font=(UI, 9)).pack(anchor="e")
 
-        self.warn_bar = tk.Frame(self, bg="#3d2a12")
+        self.warn_bar = tk.Frame(self, bg=WARN_BG)
         self.warn_label = tk.Label(
             self.warn_bar,
             text="OBS is open. Apply will restart OBS. FiveM and other games can stay running.",
-            bg="#3d2a12",
+            bg=WARN_BG,
             fg=AMBER,
             font=("Segoe UI Semibold", 9),
             pady=8,
@@ -413,40 +719,18 @@ class ClipKitApp(tk.Tk):
         self._status_dot = tk.Label(status_wrap, text="●", bg=BG, fg=GREEN, font=(UI, 9))
         self._status_dot.pack(side="left", padx=(0, 8))
         tk.Label(
-            status_wrap, textvariable=self._status, bg=BG, fg=MUTED, font=(MONO, 9), wraplength=680, justify="left"
+            status_wrap, textvariable=self._status, bg=BG, fg=MUTED, font=(UI, 10), wraplength=680, justify="left"
         ).pack(side="left", fill="x", expand=True)
-        self.apply_btn = tk.Button(
-            bar,
-            text="Apply to OBS",
-            command=self.apply,
-            bg=PRIMARY_BTN,
-            fg=PRIMARY,
-            activebackground=BLURPLE_DIM,
-            activeforeground=PRIMARY,
-            disabledforeground=MUTED,
-            relief="flat",
-            bd=0,
-            padx=28,
-            pady=12,
-            font=(UI, 13, "bold"),
-            cursor="hand2",
+        self.apply_btn = RoundedButton(
+            bar, "Apply to OBS", self.apply,
+            fill=PRIMARY_BTN, fg=ON_PRIMARY, hover=BLURPLE_DIM,
+            font=(UI, 12, "bold"), radius=12, padx=26, pady=13,
         )
         self.apply_btn.pack(side="right")
-        self.test_btn = tk.Button(
-            bar,
-            text="Test clip",
-            command=self.test_clip,
-            bg=SURFACE,
-            fg=TEXT,
-            activebackground=RAISED,
-            activeforeground=PRIMARY,
-            disabledforeground=MUTED,
-            relief="flat",
-            bd=0,
-            padx=20,
-            pady=12,
-            font=(UI, 11, "bold"),
-            cursor="hand2",
+        self.test_btn = RoundedButton(
+            bar, "Test clip", self.test_clip,
+            fill=SURFACE, fg=TEXT, hover=RAISED,
+            font=(UI, 11, "bold"), radius=12, padx=20, pady=13,
         )
         self.test_btn.pack(side="right", padx=(0, 10))
 
@@ -509,10 +793,14 @@ class ClipKitApp(tk.Tk):
             [(pid, pid.title()) for pid in PRESET_ORDER],
             self._on_choices_changed,
         )
+        summary_card = RoundedCard(choices, radius=12, fill=ACCENT_SOFT)
+        summary_card.pack(fill="x", padx=22, pady=(2, 10))
+        sb = summary_card.body
+        tk.Frame(sb, bg=PRIMARY_BTN, width=3).pack(side="left", fill="y", pady=2)
         self.preset_copy = tk.Label(
-            choices, text="", bg=PANEL, fg=PRIMARY, font=(MONO, 9), wraplength=520, justify="left"
+            sb, text="", bg=ACCENT_SOFT, fg=TEXT, font=(UI, 10), wraplength=420, justify="left"
         )
-        self.preset_copy.pack(anchor="w", padx=20, pady=(0, 4))
+        self.preset_copy.pack(side="left", anchor="w", padx=12, pady=10)
         self._chips(
             choices,
             "Clip length",
@@ -529,9 +817,9 @@ class ClipKitApp(tk.Tk):
         )
         self._chips(
             choices,
-            "Bitrate",
+            "Bitrate (Mbps)",
             self._bitrate,
-            RECORD_BITRATES,
+            [(kbps, str(kbps // 1000)) for kbps, _label in RECORD_BITRATES],
             self._on_choices_changed,
         )
         self._chips(
@@ -546,8 +834,8 @@ class ClipKitApp(tk.Tk):
             text="This game follows whatever you tab into. You do not open OBS to switch. Discord and browsers are ignored. Any fullscreen grabs whatever is fullscreen.",
             bg=PANEL,
             fg=MUTED,
-            font=(MONO, 8),
-            wraplength=520,
+            font=(UI, 9),
+            wraplength=380,
             justify="left",
         ).pack(anchor="w", padx=20, pady=(0, 8))
         self._chips(
@@ -574,8 +862,8 @@ class ClipKitApp(tk.Tk):
             text="Game audio on track 1, mic on track 2. ClipKit writes this mic into Settings → Audio. Desktop audio is disabled.",
             bg=PANEL,
             fg=MUTED,
-            font=(MONO, 8),
-            wraplength=520,
+            font=(UI, 9),
+            wraplength=380,
             justify="left",
         ).pack(anchor="w", padx=20, pady=(0, 16))
 
@@ -597,25 +885,14 @@ class ClipKitApp(tk.Tk):
             text="Optional: Medal sorting renames Medal clips into the same kind of server or game folders.",
             bg=PANEL,
             fg=MUTED,
-            font=(MONO, 8),
-            wraplength=520,
+            font=(UI, 9),
+            wraplength=380,
             justify="left",
         ).pack(anchor="w", padx=20, pady=(0, 8))
-        self.medal_btn = tk.Button(
-            save,
-            text="Set up Medal sorting",
-            command=self.setup_medal_sorting,
-            bg=RAISED,
-            fg=TEXT,
-            activebackground=BRIGHT,
-            activeforeground=PRIMARY,
-            disabledforeground=MUTED,
-            relief="flat",
-            bd=0,
-            padx=16,
-            pady=10,
-            font=(UI, 10, "bold"),
-            cursor="hand2",
+        self.medal_btn = RoundedButton(
+            save, "Set up Medal sorting", self.setup_medal_sorting,
+            fill=RAISED, fg=TEXT, hover=BRIGHT,
+            font=(UI, 10, "bold"), radius=10, padx=16, pady=10,
         )
         self.medal_btn.pack(anchor="w", padx=20, pady=(0, 16))
 
@@ -643,6 +920,13 @@ class ClipKitApp(tk.Tk):
             "Sort Medal clips by FiveM server (off unless you turn it on)",
             self._sort_medal,
         )
+        self._av1_check = self._check(
+            options,
+            "Use AV1 encoding — smaller files (needs RTX 40+, RX 7000, or Arc)",
+            self._use_av1,
+            self._on_choices_changed,
+        )
+        self._av1_check.configure(state="disabled")
         tk.Frame(options, bg=PANEL, height=10).pack()
 
         fresh = self._card(
@@ -656,24 +940,13 @@ class ClipKitApp(tk.Tk):
             bg=PANEL,
             fg=MUTED,
             font=(UI, 9),
-            wraplength=420,
+            wraplength=380,
             justify="left",
         ).pack(anchor="w", padx=20, pady=(0, 12))
-        self.fresh_btn = tk.Button(
-            fresh,
-            text="Remove OBS and install latest",
-            command=self.fresh_install,
-            bg=RAISED,
-            fg=TEXT,
-            activebackground=BRIGHT,
-            activeforeground=PRIMARY,
-            disabledforeground=MUTED,
-            relief="flat",
-            bd=0,
-            padx=16,
-            pady=10,
-            font=(UI, 10, "bold"),
-            cursor="hand2",
+        self.fresh_btn = RoundedButton(
+            fresh, "Remove OBS and install latest", self.fresh_install,
+            fill=RAISED, fg=TEXT, hover=BRIGHT,
+            font=(UI, 10, "bold"), radius=10, padx=16, pady=10,
         )
         self.fresh_btn.pack(anchor="w", padx=20, pady=(0, 16))
 
@@ -681,17 +954,30 @@ class ClipKitApp(tk.Tk):
         self._sync_mic_controls()
 
     def _make_pill(self, parent: tk.Misc, title: str, value: str, *, accent: bool = False) -> tk.Label:
-        bg = "#0d2a22" if accent else SURFACE
-        box = tk.Frame(parent, bg=bg, highlightbackground=BORDER, highlightthickness=1)
-        box.pack(side="left", padx=(0, 8), pady=2, fill="x", expand=True)
-        tk.Label(box, text=title.upper(), bg=bg, fg=GREEN if accent else MUTED, font=(UI, 7, "bold")).pack(
-            anchor="w", padx=12, pady=(8, 0)
+        bg = "#122a20" if accent else SURFACE
+        card = RoundedCard(parent, radius=12, fill=bg)
+        card.pack(side="left", padx=(0, 10), pady=2, fill="x", expand=True)
+        box = card.body
+        tk.Label(box, text=title.upper(), bg=bg, fg=GREEN if accent else FAINT, font=(UI, 7, "bold")).pack(
+            anchor="w", padx=12, pady=(9, 0)
         )
         value_lbl = tk.Label(
-            box, text=value, bg=bg, fg=TEXT, font=(MONO, 9), wraplength=200, justify="left"
+            box, text=value, bg=bg, fg=TEXT, font=(UI, 10, "bold"), wraplength=200, justify="left"
         )
-        value_lbl.pack(anchor="w", padx=12, pady=(2, 8))
+        value_lbl.pack(anchor="w", padx=12, pady=(2, 10))
         return value_lbl
+
+    def _add_hover(self, widget: tk.Button, base: str, hover: str) -> None:
+        def on_enter(_e) -> None:
+            if str(widget["state"]) != "disabled":
+                widget.configure(bg=hover)
+
+        def on_leave(_e) -> None:
+            if str(widget["state"]) != "disabled":
+                widget.configure(bg=base)
+
+        widget.bind("<Enter>", on_enter)
+        widget.bind("<Leave>", on_leave)
 
     def _selected_mic(self) -> tuple[str, str]:
         device = self._mic_by_label.get(self._mic_choice.get().strip())
@@ -774,6 +1060,9 @@ class ClipKitApp(tk.Tk):
         self._mic_choice.set(chosen)
         self._sync_mic_controls()
 
+    def _codec(self) -> str:
+        return "av1" if self._use_av1.get() else "h264"
+
     def _on_choices_changed(self) -> None:
         if not self._hw:
             return
@@ -782,6 +1071,7 @@ class ClipKitApp(tk.Tk):
             replay_seconds=int(self._clip_seconds.get()),
             fps=int(self._fps.get()),
             bitrate_kbps=int(self._bitrate.get()),
+            codec=self._codec(),
         )
         self._sync_preset_copy()
 
@@ -824,15 +1114,35 @@ class ClipKitApp(tk.Tk):
 
     def _apply_hardware(self, hw: Hardware, *, status_ready: bool = True) -> None:
         self._hw = hw
+        if av1_supported(hw):
+            self._av1_check.configure(state="normal")
+        else:
+            self._use_av1.set(False)
+            self._av1_check.configure(state="disabled")
         self._presets = all_presets(
             hw,
             replay_seconds=int(self._clip_seconds.get()),
             fps=int(self._fps.get()),
             bitrate_kbps=int(self._bitrate.get()),
+            codec=self._codec(),
         )
         recommended = recommend_id(hw)
         if not self._settings_restored:
             self._preset_id.set(recommended)
+            rec_preset = self._presets.get(recommended)
+            if rec_preset is not None:
+                suggested = recommend_bitrate(
+                    rec_preset.output_width, rec_preset.output_height, int(self._fps.get())
+                )
+                if suggested != int(self._bitrate.get()):
+                    self._bitrate.set(suggested)
+                    self._presets = all_presets(
+                        hw,
+                        replay_seconds=int(self._clip_seconds.get()),
+                        fps=int(self._fps.get()),
+                        bitrate_kbps=suggested,
+                        codec=self._codec(),
+                    )
             self._settings_restored = True
         for store, variable in self._chip_groups:
             self._refresh_chips(store, variable)
@@ -864,14 +1174,17 @@ class ClipKitApp(tk.Tk):
         save_label = save.hotkey.label if save else "F9"
         mbps = preset.bitrate_kbps / 1000
         bitrate = f"{mbps:g} Mbps" if mbps == int(mbps) else f"{preset.bitrate_kbps} kbps"
-        self.preset_copy.configure(
-            text=(
-                f"{preset.output_width}×{preset.output_height}  •  {preset.fps} fps  •  "
-                f"{bitrate}  •  {preset.encoder_label}  •  last {length}  •  Save {save_label}{tag}"
-            )
+        clip_mb = estimated_clip_mb(preset.bitrate_kbps, seconds)
+        size = f"≈{clip_mb / 1024:.1f} GB/clip" if clip_mb >= 1024 else f"≈{clip_mb} MB/clip"
+        # Two tidy lines: video spec on top, storage/hotkey below (avoids a cramped wrap).
+        spec = (
+            f"{preset.output_width}×{preset.output_height}  •  {preset.fps} fps  •  "
+            f"{bitrate}  •  {preset.encoder_label}"
         )
-        for value, (btn, label) in getattr(self, "_quality_chips", {}).items():
-            btn.configure(text=f"{label}  •  Best" if value == rec else label)
+        meta = f"{size}  •  last {length}  •  Save {save_label}{tag}"
+        self.preset_copy.configure(text=f"{spec}\n{meta}")
+        for value, (chip, label) in getattr(self, "_quality_chips", {}).items():
+            chip.set_text(f"{label}  •  Best" if value == rec else label)
         for store, variable in self._chip_groups:
             if variable is self._preset_id:
                 self._refresh_chips(store, variable)
@@ -1058,6 +1371,26 @@ class ClipKitApp(tk.Tk):
         if not folder:
             messagebox.showerror("Clips folder", "Pick a folder where clips should be saved.")
             return
+
+        # If a ClipKit profile already exists, ask whether to replace it or make a new one.
+        self._active_profile = PROFILE_NAME
+        try:
+            profile_exists = clipkit_profile_exists()
+        except Exception:  # noqa: BLE001
+            profile_exists = False
+        if profile_exists:
+            new_name = next_clipkit_profile_name()
+            choice = messagebox.askyesnocancel(
+                "ClipKit profile already exists",
+                "You already have a ClipKit profile in OBS.\n\n"
+                "Yes  —  Replace your existing ClipKit profile\n"
+                f"No  —  Keep it and make a new one ({new_name})\n"
+                "Cancel  —  Stop",
+            )
+            if choice is None:
+                return
+            self._active_profile = PROFILE_NAME if choice else new_name
+
         installing = not obs_is_installed()
         if installing:
             if not messagebox.askyesno(
@@ -1127,6 +1460,7 @@ class ClipKitApp(tk.Tk):
     def _install_failed(self, exc: Exception) -> None:
         self._set_busy(False, "OBS install did not finish.")
         traceback.print_exc()
+        log_exception(f"OBS install failed: {exc}")
         messagebox.showerror("Could not install OBS", str(exc))
 
     def _persist_settings(self) -> None:
@@ -1143,6 +1477,7 @@ class ClipKitApp(tk.Tk):
                     start_with_windows=self._start_with_windows.get(),
                     enable_recording=self._enable_recording.get(),
                     sort_medal=self._sort_medal.get(),
+                    use_av1=self._use_av1.get(),
                 )
             )
         except OSError:
@@ -1183,6 +1518,7 @@ class ClipKitApp(tk.Tk):
             ("start_with_windows", self._start_with_windows),
             ("enable_recording", self._enable_recording),
             ("sort_medal", self._sort_medal),
+            ("use_av1", self._use_av1),
         )
         for key, variable in extras:
             if key in data:
@@ -1217,21 +1553,22 @@ class ClipKitApp(tk.Tk):
             f"Game Capture: {hooked}",
         ]
         ok = bool(info.get("ok"))
+        profile = self._active_profile
         if ok:
             lines.append("")
-            lines.append("OBS is open on the ClipKit profile.")
+            lines.append(f"OBS is open on the {profile} profile.")
         elif info["obs"] != "open":
             lines.append("")
-            lines.append("OBS did not stay open. Open OBS yourself — it should be on the ClipKit profile.")
-        elif info["profile"] != PROFILE_NAME:
+            lines.append(f"OBS did not stay open. Open OBS yourself — it should be on the {profile} profile.")
+        elif info["profile"] != profile:
             lines.append("")
-            lines.append("OBS opened, but not on the ClipKit profile. Pick Profile → ClipKit.")
+            lines.append(f"OBS opened, but not on the {profile} profile. Pick Profile → {profile}.")
         return "\n".join(lines), ok
 
     def _poll_health(self) -> None:
         if not self.winfo_exists():
             return
-        info = probe(expect_replay=self._health_expect_replay)
+        info = probe(expect_replay=self._health_expect_replay, profile_name=self._active_profile)
         reveal_obs_window()
         self._health_tries += 1
         if not info.get("ok") and self._health_tries < 40:
@@ -1317,6 +1654,7 @@ class ClipKitApp(tk.Tk):
                 capture=self._capture.get(),
                 enable_recording=self._enable_recording.get(),
                 start_with_windows=self._start_with_windows.get(),
+                profile_name=self._active_profile,
             )
             used = str(result.get("output_dir") or "").strip()
             if used and not same_path(used, self._output.get()):
@@ -1333,15 +1671,22 @@ class ClipKitApp(tk.Tk):
         except Exception as exc:  # noqa: BLE001
             self._set_busy(False)
             traceback.print_exc()
+            log_exception(f"apply_setup failed: {exc}")
             messagebox.showerror("ClipKit could not apply settings", str(exc))
             return
+        log(f"apply succeeded: profile={result.get('profile')} output={result.get('output_dir')}")
+        checks = verify_apply(profile_name=self._active_profile)
+        log(f"verify_apply: {checks}")
+        if not checks.get("ok"):
+            failed = [name for name, ok in checks.items() if name != "ok" and not ok]
+            self._status.set("Applied, but a check needs a look: " + ", ".join(failed))
         self._just_installed = False
         if result.get("mic_device_id"):
             self._saved = dict(self._saved or {})
             self._saved["mic_device_id"] = result["mic_device_id"]
             self._saved["mic_device_name"] = str(result.get("mic") or "")
         self._persist_settings()
-        launched = launch_obs_clipkit()
+        launched = launch_obs_clipkit(profile=self._active_profile)
         self._health_apply_result = result
         self._health_expect_replay = True
         self._health_tries = 0
@@ -1350,7 +1695,7 @@ class ClipKitApp(tk.Tk):
             self._set_system_label("Checking…", color=AMBER)
             self.after(500, self._poll_health)
             return
-        info = probe(expect_replay=self._health_expect_replay)
+        info = probe(expect_replay=self._health_expect_replay, profile_name=self._active_profile)
         self._set_busy(False)
         self._show_apply_result(result, info)
 

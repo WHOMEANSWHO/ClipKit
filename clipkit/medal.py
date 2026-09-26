@@ -10,7 +10,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from .paths import appdata_dir, ensure_clips_dir, local_appdata_dir, scripts_dir
+from .paths import appdata_dir, atomic_write_text, ensure_clips_dir, local_appdata_dir, scripts_dir
 from .startup import create_shortcut, windows_startup_dir
 
 STARTUP_NAME = "ClipKit Medal sorter.lnk"
@@ -240,8 +240,7 @@ def write_medal_sorter_config(output_dir: Path, watch: list[Path] | None = None)
         "watch": folders,
         "output": str(Path(output_dir)),
     }
-    path = sorter_config_path()
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    atomic_write_text(sorter_config_path(), json.dumps(payload, indent=2))
     return payload
 
 

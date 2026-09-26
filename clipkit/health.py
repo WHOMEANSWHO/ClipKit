@@ -28,8 +28,8 @@ def current_profile(config_dir: Path | None = None) -> str:
     return parser.get("Basic", "Profile", fallback="").strip()
 
 
-def _scene_collection(config_dir: Path | None = None) -> dict:
-    path = (config_dir or obs_config_dir()) / "basic" / "scenes" / f"{SCENE_NAME}.json"
+def _scene_collection(config_dir: Path | None = None, collection_name: str = SCENE_NAME) -> dict:
+    path = (config_dir or obs_config_dir()) / "basic" / "scenes" / f"{collection_name}.json"
     if not path.is_file():
         return {}
     try:
@@ -74,10 +74,55 @@ def hooked_game_label() -> str:
     return ""
 
 
-def probe(*, expect_replay: bool = True) -> dict:
+def verify_apply(config_dir: Path | None = None, profile_name: str = PROFILE_NAME) -> dict:
+    """Confirm Apply actually wrote a complete, self-consistent ClipKit setup.
+
+    Checks the on-disk OBS config that Apply produced: the profile exists with the
+    replay buffer enabled, the scene collection has the Game Capture source, and
+    OBS is pointed at that profile/collection. Returns a dict of individual checks
+    plus an overall ``ok``.
+    """
+    cfg = config_dir or obs_config_dir()
+    checks: dict[str, bool] = {}
+
+    profile_ini = cfg / "basic" / "profiles" / profile_name / "basic.ini"
+    profile_written = False
+    replay_configured = False
+    if profile_ini.is_file():
+        parser = _ini_parser()
+        try:
+            _read_ini(parser, profile_ini)
+            profile_written = parser.get("General", "Name", fallback="").strip() == profile_name
+            rec_rb = (
+                parser.get("AdvOut", "RecRB", fallback="")
+                or parser.get("SimpleOutput", "RecRB", fallback="")
+            )
+            try:
+                rb_time = int(parser.get("AdvOut", "RecRBTime", fallback="0") or 0)
+            except ValueError:
+                rb_time = 0
+            replay_configured = str(rec_rb).strip().lower() == "true" and rb_time > 0
+        except Exception:  # noqa: BLE001
+            profile_written = False
+    checks["profile_written"] = profile_written
+    checks["replay_configured"] = replay_configured
+
+    scene = _scene_collection(cfg, profile_name)
+    source_names = [
+        src.get("name") for src in (scene.get("sources") or []) if isinstance(src, dict)
+    ]
+    checks["scene_written"] = scene.get("name") == profile_name and "Game Capture" in source_names
+
+    checks["profile_selected"] = current_profile(cfg) == profile_name
+
+    checks["ok"] = all(value for key, value in checks.items() if key != "ok")
+    return checks
+
+
+def probe(*, expect_replay: bool = True, profile_name: str = PROFILE_NAME) -> dict:
     profile = current_profile()
     running = obs_is_running()
-    ok = running and profile == PROFILE_NAME
+    ok = running and profile == profile_name
     if running:
         replay_label = "started with OBS" if expect_replay else "check OBS"
     else:
@@ -114,13 +159,22 @@ def newest_clip(folder: Path, *, after: float) -> Path | None:
     return newest
 
 
+def _explorer_select_command(path: Path) -> str:
+    """Command line that opens Explorer with the file selected.
+
+    Explorer needs ``/select,"<path>"`` with no space after the comma. Passing a
+    list to subprocess mangles the embedded quotes (list2cmdline escapes them),
+    so build the command line as one string and hand it to Popen directly.
+    """
+    return f'explorer /select,"{os.path.normpath(str(path))}"'
+
+
 def reveal_in_explorer(path: Path) -> Path:
     from .paths import ensure_clips_dir
 
     path = Path(path)
     if path.is_file():
-        # Quoting is required when the path has spaces; /select,"C:\path with space\file.mp4"
-        subprocess.Popen(["explorer", f'/select,"{path}"'], close_fds=True)
+        subprocess.Popen(_explorer_select_command(path), close_fds=True)
         return path
     folder = ensure_clips_dir(path)
     os.startfile(os.fsdecode(folder))

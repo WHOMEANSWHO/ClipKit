@@ -7,10 +7,16 @@ import sys
 
 
 def main(argv: list[str] | None = None) -> int:
+    from . import __version__
     from .paths import leave_extract_dir
 
     leave_extract_dir()
     parser = argparse.ArgumentParser(description="ClipKit OBS clipping setup")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"ClipKit {__version__}",
+    )
     parser.add_argument(
         "--detect",
         action="store_true",
@@ -36,12 +42,22 @@ def main(argv: list[str] | None = None) -> int:
         metavar="DIR",
         help="Write a ClipKit profile into DIR instead of the real OBS config",
     )
+    parser.add_argument(
+        "--diagnose",
+        action="store_true",
+        help="Collect a troubleshooting report (OBS config, profiles, logs) and open it",
+    )
     args = parser.parse_args(argv)
 
     if args.uninstall:
         from .windows_app import uninstall_windows_app
 
         return uninstall_windows_app(quiet=args.quiet)
+
+    if args.diagnose:
+        from .diagnose import run_diagnose
+
+        return run_diagnose()
 
     if args.portable:
         import os
@@ -68,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.detect:
         from .hardware import detect
-        from .presets import all_presets, recommend_id
+        from .presets import all_presets, recommend_bitrate, recommend_id
 
         hw = detect()
         rec = recommend_id(hw)
@@ -93,6 +109,9 @@ def main(argv: list[str] | None = None) -> int:
                 f"{preset.bitrate_kbps} kbps "
                 f"{preset.replay_seconds // 60} min{mark}"
             )
+        rec_preset = presets[rec]
+        suggested = recommend_bitrate(rec_preset.output_width, rec_preset.output_height, rec_preset.fps)
+        print(f"Suggested bitrate: {suggested // 1000} Mbps (for {rec})")
         for note in hw.notes:
             print(f"note: {note}")
         return 0

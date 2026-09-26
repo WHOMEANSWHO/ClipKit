@@ -2,7 +2,8 @@ param(
     [string]$Title = "Clip saved",
     [string]$Message = "",
     [switch]$Toast,
-    [switch]$Popup
+    [switch]$Popup,
+    [switch]$SelfTest
 )
 
 $ErrorActionPreference = "Continue"
@@ -68,7 +69,7 @@ function Show-WindowsToast([string]$heading, [string]$body) {
     return $false
 }
 
-function Show-MedalPopup([string]$heading) {
+function Show-MedalPopup([string]$heading, [switch]$BuildOnly) {
     Add-Type -AssemblyName System.Windows.Forms
     Add-Type -AssemblyName System.Drawing
     if (-not ("ClipKitNoActivateForm" -as [type])) {
@@ -143,6 +144,12 @@ public class ClipKitNoActivateForm : Form {
     $titleLabel.Top = 22
     $form.Controls.Add($titleLabel)
 
+    if ($BuildOnly) {
+        # CI self-test: prove the C# type compiles and the form builds, without displaying it.
+        $form.Dispose()
+        return
+    }
+
     $form.ShowPassive()
     $watch = [System.Diagnostics.Stopwatch]::StartNew()
     while ($watch.ElapsedMilliseconds -lt 2200) {
@@ -152,6 +159,17 @@ public class ClipKitNoActivateForm : Form {
     $form.Close()
     $form.Dispose()
     Write-ClipLog ("Popup shown: " + $heading)
+}
+
+if ($SelfTest) {
+    try {
+        Show-MedalPopup $Title -BuildOnly
+        Write-Output "SELFTEST_OK"
+        exit 0
+    } catch {
+        Write-Error ("SelfTest failed: " + $_.Exception.Message)
+        exit 1
+    }
 }
 
 $didPopup = $false

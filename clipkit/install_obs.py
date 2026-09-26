@@ -443,7 +443,7 @@ def launch_obs_plain() -> bool:
     return True
 
 
-def launch_obs_clipkit() -> bool:
+def launch_obs_clipkit(profile: str = "ClipKit", collection: str | None = None) -> bool:
     """Start OBS with the ClipKit profile and replay buffer, as a normal window."""
     exe = find_obs_exe()
     if exe is None or not exe.is_file():
@@ -452,9 +452,9 @@ def launch_obs_clipkit() -> bool:
         str(exe),
         "--startreplaybuffer",
         "--profile",
-        "ClipKit",
+        profile,
         "--collection",
-        "ClipKit",
+        collection or profile,
         "--disable-shutdown-check",
     ]
     if not _obs_popen(args, exe):

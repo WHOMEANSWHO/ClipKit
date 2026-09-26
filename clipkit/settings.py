@@ -6,8 +6,11 @@ import json
 from pathlib import Path
 
 from .keys import DEFAULT_BINDS, Hotkey, UserBinds
-from .paths import appdata_dir
+from .paths import appdata_dir, atomic_write_text
 from .presets import CLIP_LENGTHS, DEFAULT_BITRATE, FPS_CHOICES, PRESET_ORDER, RECORD_BITRATES
+
+# Backwards-compatible alias: settings used to define this locally.
+_atomic_write_text = atomic_write_text
 
 
 def settings_path() -> Path:
@@ -32,8 +35,8 @@ def ptt_config_path() -> Path:
 
 def save_ptt_config(binds: UserBinds) -> None:
     path = ptt_config_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
+    _atomic_write_text(
+        path,
         json.dumps(
             {
                 "enabled": binds.ptt_enabled,
@@ -41,7 +44,6 @@ def save_ptt_config(binds: UserBinds) -> None:
             },
             indent=2,
         ),
-        encoding="utf-8",
     )
 
 
@@ -120,9 +122,7 @@ def load_settings() -> dict:
 
 
 def save_settings(data: dict) -> None:
-    path = settings_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    _atomic_write_text(settings_path(), json.dumps(data, indent=2))
 
 
 def binds_from_settings(data: dict) -> UserBinds:
@@ -169,6 +169,7 @@ def settings_from_app(
     start_with_windows: bool,
     enable_recording: bool,
     sort_medal: bool = False,
+    use_av1: bool = False,
 ) -> dict:
     allowed_bitrate = {kbps for kbps, _label in RECORD_BITRATES}
     allowed_seconds = {seconds for seconds, _label in CLIP_LENGTHS}
@@ -185,6 +186,7 @@ def settings_from_app(
         "start_with_windows": start_with_windows,
         "enable_recording": enable_recording,
         "sort_medal": sort_medal,
+        "use_av1": use_av1,
         "binds": {
             "save": _hotkey_to_dict(binds.save),
             "replay_toggle": _hotkey_to_dict(binds.replay_toggle),
