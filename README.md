@@ -90,7 +90,14 @@ python -m pip install -r requirements-dev.txt
 python -m pytest tests
 ```
 
-The tests cover the cross-platform logic (presets, hotkeys, microphone selection, settings, and OBS profile/scene generation). GitHub Actions (`.github/workflows/windows.yml`) runs the tests on `windows-latest`, checks `--detect` and a `--dry-run` profile write, builds `ClipKit.exe`, uploads it as a build artifact, and attaches it to a Release when you push a `v*` tag.
+The tests cover the cross-platform logic (presets, bitrate/size recommendation, AV1 encoder selection, hotkeys, microphone selection, settings, OBS profile/scene generation, diagnostics, and post-apply verification). GitHub Actions (`.github/workflows/windows.yml`) runs the tests on `windows-latest`, checks `--detect` and a `--dry-run` profile write, builds `ClipKit.exe`, uploads it as a build artifact, and attaches it to a Release when you push a `v*` tag.
+
+### Optional: code-signed releases
+
+The Windows build will code-sign `ClipKit.exe` (reducing the SmartScreen prompt) when these repository secrets are set; without them the signing step is skipped:
+
+- `WINDOWS_CERT_PFX_BASE64` — your code-signing certificate (`.pfx`) as base64.
+- `WINDOWS_CERT_PASSWORD` — the certificate password.
 
 ## Notes
 
