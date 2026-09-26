@@ -40,6 +40,33 @@ def obs_is_configured() -> bool:
     return (obs_config_dir() / "global.ini").exists() or (obs_config_dir() / "user.ini").exists()
 
 
+def existing_profile_dirs(config_dir: Path | None = None) -> list[str]:
+    """Names of every OBS profile folder that exists."""
+    base = (config_dir or obs_config_dir()) / "basic" / "profiles"
+    if not base.is_dir():
+        return []
+    try:
+        return [p.name for p in base.iterdir() if p.is_dir()]
+    except OSError:
+        return []
+
+
+def clipkit_profile_exists(config_dir: Path | None = None) -> bool:
+    """True if a ClipKit profile already exists (so Apply can offer to replace it)."""
+    return PROFILE_NAME in existing_profile_dirs(config_dir)
+
+
+def next_clipkit_profile_name(config_dir: Path | None = None) -> str:
+    """Return ``ClipKit`` if free, else the next free ``ClipKit2``, ``ClipKit3``…"""
+    names = set(existing_profile_dirs(config_dir))
+    if PROFILE_NAME not in names:
+        return PROFILE_NAME
+    index = 2
+    while f"{PROFILE_NAME}{index}" in names:
+        index += 1
+    return f"{PROFILE_NAME}{index}"
+
+
 def _new_uuid() -> str:
     return str(uuid.uuid4())
 
@@ -49,7 +76,7 @@ def _write_ini(path: Path, text: str) -> None:
     path.write_text(text.replace("\n", "\r\n"), encoding="utf-8")
 
 
-def _write_profile(path: Path, text: str) -> None:
+def _write_profile(path: Path, text: str, profile_name: str = PROFILE_NAME) -> None:
     """Update the existing ClipKit profile in place instead of replacing it."""
     incoming = _ini_parser()
     incoming.read_string(text.replace("\r\n", "\n"))
@@ -70,7 +97,7 @@ def _write_profile(path: Path, text: str) -> None:
                 parser.remove_option("Hotkeys", key)
     if not parser.has_section("General"):
         parser.add_section("General")
-    parser.set("General", "Name", PROFILE_NAME)
+    parser.set("General", "Name", profile_name)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="\r\n") as handle:
         parser.write(handle, space_around_delimiters=False)
@@ -135,6 +162,7 @@ def _profile_ini(
     *,
     enable_recording: bool = True,
     record_mic_track: bool = True,
+    profile_name: str = PROFILE_NAME,
 ) -> str:
     rec_path = str(output_dir).replace("/", "\\")
     save_ini = binds.save.replay_save_ini()
@@ -147,7 +175,7 @@ def _profile_ini(
 OBSBasic.StopRecording={record_ini}
 """
     return f"""[General]
-Name={PROFILE_NAME}
+Name={profile_name}
 
 [Output]
 Mode=Advanced
@@ -467,6 +495,7 @@ def _scene_collection(
     sorter_path: Path | None = None,
     script_paths: list[Path] | None = None,
     binds: UserBinds | None = None,
+    collection_name: str = SCENE_NAME,
 ) -> dict:
     existing = existing if isinstance(existing, dict) else {}
     existing_mic = existing.get("AuxAudioDevice1") if isinstance(existing.get("AuxAudioDevice1"), dict) else {}
@@ -517,7 +546,7 @@ def _scene_collection(
         )
 
     collection = {
-        "name": SCENE_NAME,
+        "name": collection_name,
         "current_scene": "Game",
         "current_program_scene": "Game",
         "scene_order": [{"name": "Game"}],
@@ -673,13 +702,13 @@ SceneCollectionFile=ClipKit.json
         )
 
 
-def _set_current_profile(parser: ConfigParser) -> None:
+def _set_current_profile(parser: ConfigParser, profile_name: str = PROFILE_NAME) -> None:
     if not parser.has_section("Basic"):
         parser.add_section("Basic")
-    parser.set("Basic", "Profile", PROFILE_NAME)
-    parser.set("Basic", "ProfileDir", PROFILE_NAME)
-    parser.set("Basic", "SceneCollection", SCENE_NAME)
-    parser.set("Basic", "SceneCollectionFile", f"{SCENE_NAME}.json")
+    parser.set("Basic", "Profile", profile_name)
+    parser.set("Basic", "ProfileDir", profile_name)
+    parser.set("Basic", "SceneCollection", profile_name)
+    parser.set("Basic", "SceneCollectionFile", f"{profile_name}.json")
 
 
 def _upsert_ini_key(text: str, section: str, key: str, value: str) -> str:
@@ -704,12 +733,12 @@ def _upsert_ini_key(text: str, section: str, key: str, value: str) -> str:
     return text[:start] + body + text[end:]
 
 
-def _update_user_ini(config_dir: Path) -> None:
+def _update_user_ini(config_dir: Path, profile_name: str = PROFILE_NAME) -> None:
     user_ini = config_dir / "user.ini"
     parser = _ini_parser()
     if user_ini.exists():
         _read_ini(parser, user_ini)
-    _set_current_profile(parser)
+    _set_current_profile(parser, profile_name)
     if not parser.has_section("General"):
         parser.add_section("General")
     parser.set("General", "HotkeyFocusType", "NeverDisableHotkeys")
@@ -753,6 +782,7 @@ def apply_setup(
     capture: str = "window",
     enable_recording: bool = True,
     start_with_windows: bool = False,
+    profile_name: str = PROFILE_NAME,
 ) -> dict:
     """Write the ClipKit OBS profile, scene, scripts, and optional Windows startup.
 
@@ -767,7 +797,7 @@ def apply_setup(
         f"apply_setup start: preset={preset.label} "
         f"{preset.output_width}x{preset.output_height}@{preset.fps} "
         f"bitrate={preset.bitrate_kbps}kbps encoder={preset.encoder_id} "
-        f"capture={capture} config_dir={config_dir}"
+        f"capture={capture} profile={profile_name} config_dir={config_dir}"
     )
     _bootstrap_config(config_dir)
 
@@ -786,7 +816,7 @@ def apply_setup(
     except OSError:
         pass
 
-    profile_dir = config_dir / "basic" / "profiles" / PROFILE_NAME
+    profile_dir = config_dir / "basic" / "profiles" / profile_name
     profile_dir.mkdir(parents=True, exist_ok=True)
     _write_profile(
         profile_dir / "basic.ini",
@@ -796,7 +826,9 @@ def apply_setup(
             binds,
             enable_recording=enable_recording,
             record_mic_track=binds.mic_mode != "off",
+            profile_name=profile_name,
         ),
+        profile_name,
     )
     (profile_dir / "recordEncoder.json").write_text(
         json.dumps(preset.encoder_settings, indent=2),
@@ -806,7 +838,7 @@ def apply_setup(
 
     scenes_dir = config_dir / "basic" / "scenes"
     scenes_dir.mkdir(parents=True, exist_ok=True)
-    scene_path = scenes_dir / f"{SCENE_NAME}.json"
+    scene_path = scenes_dir / f"{profile_name}.json"
     existing_scene = _load_json(scene_path)
     existing_mic = {}
     if isinstance(existing_scene, dict):
@@ -823,23 +855,24 @@ def apply_setup(
                 mic_device_id=mic_device_id,
                 script_paths=script_paths,
                 binds=binds,
+                collection_name=profile_name,
             ),
             indent=4,
         ),
         encoding="utf-8",
     )
 
-    _update_user_ini(config_dir)
+    _update_user_ini(config_dir, profile_name)
 
     startup_path = None
     if start_with_windows:
-        startup_path = install_obs_windows_startup(find_obs_exe())
+        startup_path = install_obs_windows_startup(find_obs_exe(), profile_name)
     else:
         remove_obs_windows_startup()
 
     result = {
-        "profile": PROFILE_NAME,
-        "scene": SCENE_NAME,
+        "profile": profile_name,
+        "scene": profile_name,
         "output_dir": str(output_dir),
         "backup_dir": str(backup_dir),
         "save_hotkey": binds.save.label,
