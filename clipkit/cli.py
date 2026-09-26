@@ -42,12 +42,22 @@ def main(argv: list[str] | None = None) -> int:
         metavar="DIR",
         help="Write a ClipKit profile into DIR instead of the real OBS config",
     )
+    parser.add_argument(
+        "--diagnose",
+        action="store_true",
+        help="Collect a troubleshooting report (OBS config, profiles, logs) and open it",
+    )
     args = parser.parse_args(argv)
 
     if args.uninstall:
         from .windows_app import uninstall_windows_app
 
         return uninstall_windows_app(quiet=args.quiet)
+
+    if args.diagnose:
+        from .diagnose import run_diagnose
+
+        return run_diagnose()
 
     if args.portable:
         import os
