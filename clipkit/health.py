@@ -74,6 +74,51 @@ def hooked_game_label() -> str:
     return ""
 
 
+def verify_apply(config_dir: Path | None = None) -> dict:
+    """Confirm Apply actually wrote a complete, self-consistent ClipKit setup.
+
+    Checks the on-disk OBS config that Apply produced: the ClipKit profile exists
+    with the replay buffer enabled, the scene collection has the Game Capture
+    source, and OBS is pointed at the ClipKit profile/collection. Returns a dict
+    of individual checks plus an overall ``ok``.
+    """
+    cfg = config_dir or obs_config_dir()
+    checks: dict[str, bool] = {}
+
+    profile_ini = cfg / "basic" / "profiles" / PROFILE_NAME / "basic.ini"
+    profile_written = False
+    replay_configured = False
+    if profile_ini.is_file():
+        parser = _ini_parser()
+        try:
+            _read_ini(parser, profile_ini)
+            profile_written = parser.get("General", "Name", fallback="").strip() == PROFILE_NAME
+            rec_rb = (
+                parser.get("AdvOut", "RecRB", fallback="")
+                or parser.get("SimpleOutput", "RecRB", fallback="")
+            )
+            try:
+                rb_time = int(parser.get("AdvOut", "RecRBTime", fallback="0") or 0)
+            except ValueError:
+                rb_time = 0
+            replay_configured = str(rec_rb).strip().lower() == "true" and rb_time > 0
+        except Exception:  # noqa: BLE001
+            profile_written = False
+    checks["profile_written"] = profile_written
+    checks["replay_configured"] = replay_configured
+
+    scene = _scene_collection(cfg)
+    source_names = [
+        src.get("name") for src in (scene.get("sources") or []) if isinstance(src, dict)
+    ]
+    checks["scene_written"] = scene.get("name") == SCENE_NAME and "Game Capture" in source_names
+
+    checks["profile_selected"] = current_profile(cfg) == PROFILE_NAME
+
+    checks["ok"] = all(value for key, value in checks.items() if key != "ok")
+    return checks
+
+
 def probe(*, expect_replay: bool = True) -> dict:
     profile = current_profile()
     running = obs_is_running()
