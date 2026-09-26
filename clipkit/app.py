@@ -25,7 +25,13 @@ from .install_obs import (
 )
 from .keys import DEFAULT_BINDS, Hotkey, UserBinds, from_tk, mouse_button_held
 from .medal import disable_medal_sorter, install_medal_sorter
-from .obs import PROFILE_NAME, apply_setup, default_output_dir
+from .obs import (
+    PROFILE_NAME,
+    apply_setup,
+    clipkit_profile_exists,
+    default_output_dir,
+    next_clipkit_profile_name,
+)
 from .paths import icon_file, mark_file, same_path
 from .presets import (
     CLIP_LENGTHS,
@@ -473,6 +479,7 @@ class ClipKitApp(tk.Tk):
         self._health_tries = 0
         self._health_expect_replay = True
         self._health_apply_result: dict | None = None
+        self._active_profile = PROFILE_NAME
         self._obs_present: bool | None = None
         self._poll_n = 0
         self._detect_gen = 0
@@ -1348,6 +1355,26 @@ class ClipKitApp(tk.Tk):
         if not folder:
             messagebox.showerror("Clips folder", "Pick a folder where clips should be saved.")
             return
+
+        # If a ClipKit profile already exists, ask whether to replace it or make a new one.
+        self._active_profile = PROFILE_NAME
+        try:
+            profile_exists = clipkit_profile_exists()
+        except Exception:  # noqa: BLE001
+            profile_exists = False
+        if profile_exists:
+            new_name = next_clipkit_profile_name()
+            choice = messagebox.askyesnocancel(
+                "ClipKit profile already exists",
+                "You already have a ClipKit profile in OBS.\n\n"
+                "Yes  —  Replace your existing ClipKit profile\n"
+                f"No  —  Keep it and make a new one ({new_name})\n"
+                "Cancel  —  Stop",
+            )
+            if choice is None:
+                return
+            self._active_profile = PROFILE_NAME if choice else new_name
+
         installing = not obs_is_installed()
         if installing:
             if not messagebox.askyesno(
@@ -1510,21 +1537,22 @@ class ClipKitApp(tk.Tk):
             f"Game Capture: {hooked}",
         ]
         ok = bool(info.get("ok"))
+        profile = self._active_profile
         if ok:
             lines.append("")
-            lines.append("OBS is open on the ClipKit profile.")
+            lines.append(f"OBS is open on the {profile} profile.")
         elif info["obs"] != "open":
             lines.append("")
-            lines.append("OBS did not stay open. Open OBS yourself — it should be on the ClipKit profile.")
-        elif info["profile"] != PROFILE_NAME:
+            lines.append(f"OBS did not stay open. Open OBS yourself — it should be on the {profile} profile.")
+        elif info["profile"] != profile:
             lines.append("")
-            lines.append("OBS opened, but not on the ClipKit profile. Pick Profile → ClipKit.")
+            lines.append(f"OBS opened, but not on the {profile} profile. Pick Profile → {profile}.")
         return "\n".join(lines), ok
 
     def _poll_health(self) -> None:
         if not self.winfo_exists():
             return
-        info = probe(expect_replay=self._health_expect_replay)
+        info = probe(expect_replay=self._health_expect_replay, profile_name=self._active_profile)
         reveal_obs_window()
         self._health_tries += 1
         if not info.get("ok") and self._health_tries < 40:
@@ -1610,6 +1638,7 @@ class ClipKitApp(tk.Tk):
                 capture=self._capture.get(),
                 enable_recording=self._enable_recording.get(),
                 start_with_windows=self._start_with_windows.get(),
+                profile_name=self._active_profile,
             )
             used = str(result.get("output_dir") or "").strip()
             if used and not same_path(used, self._output.get()):
@@ -1630,7 +1659,7 @@ class ClipKitApp(tk.Tk):
             messagebox.showerror("ClipKit could not apply settings", str(exc))
             return
         log(f"apply succeeded: profile={result.get('profile')} output={result.get('output_dir')}")
-        checks = verify_apply()
+        checks = verify_apply(profile_name=self._active_profile)
         log(f"verify_apply: {checks}")
         if not checks.get("ok"):
             failed = [name for name, ok in checks.items() if name != "ok" and not ok]
@@ -1641,7 +1670,7 @@ class ClipKitApp(tk.Tk):
             self._saved["mic_device_id"] = result["mic_device_id"]
             self._saved["mic_device_name"] = str(result.get("mic") or "")
         self._persist_settings()
-        launched = launch_obs_clipkit()
+        launched = launch_obs_clipkit(profile=self._active_profile)
         self._health_apply_result = result
         self._health_expect_replay = True
         self._health_tries = 0
@@ -1650,7 +1679,7 @@ class ClipKitApp(tk.Tk):
             self._set_system_label("Checking…", color=AMBER)
             self.after(500, self._poll_health)
             return
-        info = probe(expect_replay=self._health_expect_replay)
+        info = probe(expect_replay=self._health_expect_replay, profile_name=self._active_profile)
         self._set_busy(False)
         self._show_apply_result(result, info)
 
