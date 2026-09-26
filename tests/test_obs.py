@@ -14,6 +14,9 @@ from clipkit.obs import (
     _profile_ini,
     _scene_collection,
     _upsert_ini_key,
+    clipkit_profile_exists,
+    existing_profile_dirs,
+    next_clipkit_profile_name,
 )
 from clipkit.presets import build_preset
 
@@ -79,3 +82,40 @@ def test_scene_collection_any_capture_mode():
     collection = _scene_collection(preset, "any", mic_device_id="default", binds=DEFAULT_BINDS)
     game = next(s for s in collection["sources"] if s["name"] == "Game Capture")
     assert game["settings"]["capture_mode"] == "any"
+
+
+def _make_profile_dir(cfg: Path, name: str) -> None:
+    (cfg / "basic" / "profiles" / name).mkdir(parents=True, exist_ok=True)
+
+
+def test_next_profile_name_when_none_exists(tmp_path):
+    assert next_clipkit_profile_name(tmp_path) == "ClipKit"
+    assert clipkit_profile_exists(tmp_path) is False
+    assert existing_profile_dirs(tmp_path) == []
+
+
+def test_next_profile_name_when_clipkit_exists(tmp_path):
+    _make_profile_dir(tmp_path, "ClipKit")
+    assert clipkit_profile_exists(tmp_path) is True
+    assert next_clipkit_profile_name(tmp_path) == "ClipKit2"
+
+
+def test_next_profile_name_skips_taken_numbers(tmp_path):
+    for name in ("ClipKit", "ClipKit2", "ClipKit3"):
+        _make_profile_dir(tmp_path, name)
+    assert next_clipkit_profile_name(tmp_path) == "ClipKit4"
+
+
+def test_profile_ini_uses_custom_profile_name():
+    text = _profile_ini(_preset(), Path("C:/clips"), DEFAULT_BINDS, profile_name="ClipKit2")
+    assert "Name=ClipKit2" in text
+    assert "Name=ClipKit\n" not in text
+
+
+def test_scene_collection_uses_custom_collection_name():
+    collection = _scene_collection(
+        _preset(), "window", mic_device_id="default", binds=DEFAULT_BINDS, collection_name="ClipKit2"
+    )
+    assert collection["name"] == "ClipKit2"
+    # The scene inside the collection is still "Game".
+    assert any(s["name"] == "Game" for s in collection["sources"])

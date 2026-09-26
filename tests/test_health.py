@@ -13,24 +13,25 @@ from clipkit.keys import DEFAULT_BINDS
 from clipkit.presets import build_preset
 
 
-def _write_valid_config(cfg) -> None:
+def _write_valid_config(cfg, profile_name: str = "ClipKit") -> None:
     preset = build_preset(
         Hardware(gpu_vendor="nvidia", gpu_name="RTX 4070", vram_gb=12, ram_gb=32), "high"
     )
-    prof_dir = cfg / "basic" / "profiles" / "ClipKit"
+    prof_dir = cfg / "basic" / "profiles" / profile_name
     prof_dir.mkdir(parents=True)
     (prof_dir / "basic.ini").write_text(
-        obs._profile_ini(preset, cfg / "clips", DEFAULT_BINDS).replace("\n", "\r\n"),
+        obs._profile_ini(preset, cfg / "clips", DEFAULT_BINDS, profile_name=profile_name).replace("\n", "\r\n"),
         encoding="utf-8",
     )
     scenes = cfg / "basic" / "scenes"
     scenes.mkdir(parents=True)
-    (scenes / "ClipKit.json").write_text(
-        json.dumps(obs._scene_collection(preset, "window", mic_device_id="default", binds=DEFAULT_BINDS)),
+    (scenes / f"{profile_name}.json").write_text(
+        json.dumps(obs._scene_collection(
+            preset, "window", mic_device_id="default", binds=DEFAULT_BINDS, collection_name=profile_name)),
         encoding="utf-8",
     )
     (cfg / "user.ini").write_text(
-        "[Basic]\r\nProfile=ClipKit\r\nSceneCollection=ClipKit\r\n", encoding="utf-8"
+        f"[Basic]\r\nProfile={profile_name}\r\nSceneCollection={profile_name}\r\n", encoding="utf-8"
     )
 
 
@@ -69,3 +70,11 @@ def test_verify_apply_fails_when_nothing_written(tmp_path):
     assert checks["ok"] is False
     assert checks["profile_written"] is False
     assert checks["scene_written"] is False
+
+
+def test_verify_apply_passes_for_custom_profile_name(tmp_path):
+    _write_valid_config(tmp_path, profile_name="ClipKit2")
+    checks = verify_apply(tmp_path, profile_name="ClipKit2")
+    assert checks["ok"] is True
+    # And the default name should NOT validate against this config.
+    assert verify_apply(tmp_path, profile_name="ClipKit")["ok"] is False
