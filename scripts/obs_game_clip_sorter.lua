@@ -1174,7 +1174,24 @@ local function detect_game_from_obs_sources()
     return best_or_error
 end
 
+-- Forward declarations: these native (FFI) helpers are defined further down but
+-- are used here to avoid spawning PowerShell (which blocks the OBS thread).
+local foreground_hook_window, best_fivem_hook_window
+
 local function foreground_process()
+    -- Fast path: read the foreground window natively — no PowerShell, no OBS stall.
+    local ok, pname, title = pcall(function()
+        local info = foreground_hook_window()
+        if info ~= nil and info.exe ~= nil and info.exe ~= "" then
+            return (info.exe:gsub("%.exe$", "")), (info.title or "")
+        end
+        return nil, nil
+    end)
+    if ok and pname ~= nil and pname ~= "" and
+        not looks_like_junk_name(pname) and not looks_like_junk_name(title) then
+        return pname, title
+    end
+
     local script = table.concat({
         "$ErrorActionPreference='Stop';",
         "Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class OGSWindow { [DllImport(\"user32.dll\")] public static extern IntPtr GetForegroundWindow(); [DllImport(\"user32.dll\")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId); }';",
@@ -1244,6 +1261,23 @@ local function is_unknown_server(value)
 end
 
 local function detect_live_fivem_server()
+    -- Fast path: find the FiveM window natively and read the server from its title.
+    -- Uses the same clean_fivem_server() logic as the fallback, so the result is
+    -- equivalent — it just skips the periodic PowerShell call that stalls OBS.
+    local hook_ok, hook = pcall(best_fivem_hook_window)
+    if hook_ok and hook ~= nil and hook.title ~= nil and hook.title ~= "" and
+        is_fivem(hook.exe or "", hook.title) then
+        local server = clean_fivem_server(hook.title)
+        if not is_unknown_server(server) then
+            return {
+                game = "FiveM",
+                server = server,
+                process = hook.exe or "FiveM",
+                window_title = hook.title,
+            }
+        end
+    end
+
     local script = table.concat({
         "$ErrorActionPreference='SilentlyContinue';",
         "Get-Process | Where-Object {",
@@ -1561,14 +1595,14 @@ local function hook_window_info(hwnd)
     }
 end
 
-local function foreground_hook_window()
+foreground_hook_window = function()
     if not prepare_game_hook_ffi() then
         return nil
     end
     return hook_window_info(user32.GetForegroundWindow())
 end
 
-local function best_fivem_hook_window()
+best_fivem_hook_window = function()
     if not prepare_game_hook_ffi() then
         return nil
     end
