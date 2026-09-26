@@ -169,6 +169,7 @@ def settings_from_app(
     start_with_windows: bool,
     enable_recording: bool,
     sort_medal: bool = False,
+    use_av1: bool = False,
 ) -> dict:
     allowed_bitrate = {kbps for kbps, _label in RECORD_BITRATES}
     allowed_seconds = {seconds for seconds, _label in CLIP_LENGTHS}
@@ -185,6 +186,7 @@ def settings_from_app(
         "start_with_windows": start_with_windows,
         "enable_recording": enable_recording,
         "sort_medal": sort_medal,
+        "use_av1": use_av1,
         "binds": {
             "save": _hotkey_to_dict(binds.save),
             "replay_toggle": _hotkey_to_dict(binds.replay_toggle),

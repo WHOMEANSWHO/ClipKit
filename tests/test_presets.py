@@ -6,10 +6,13 @@ import pytest
 
 from clipkit.hardware import Hardware
 from clipkit.presets import (
+    AV1_ENCODERS,
     DEFAULT_BITRATE,
     PRESET_ORDER,
     RECORD_BITRATES,
     all_presets,
+    av1_encoder_for,
+    av1_supported,
     build_preset,
     estimated_clip_mb,
     recommend_bitrate,
@@ -133,6 +136,41 @@ def test_estimated_clip_mb_grows_with_length_and_bitrate():
 
 def test_estimated_clip_mb_handles_zero():
     assert estimated_clip_mb(0, 0) == 1
+
+
+def test_av1_supported_for_recent_gpus():
+    assert av1_encoder_for(_hw(gpu_vendor="nvidia", gpu_name="NVIDIA GeForce RTX 4070")) == (
+        "obs_nvenc_av1_tex", "NVIDIA NVENC AV1")
+    assert av1_encoder_for(_hw(gpu_vendor="amd", gpu_name="AMD Radeon RX 7900 XTX")) == (
+        "av1_texture_amf", "AMD HW AV1")
+    assert av1_encoder_for(_hw(gpu_vendor="intel", gpu_name="Intel Arc A770")) == (
+        "obs_qsv11_av1", "Intel Quick Sync AV1")
+
+
+def test_av1_unsupported_for_older_gpus():
+    assert av1_encoder_for(_hw(gpu_vendor="nvidia", gpu_name="NVIDIA GeForce RTX 3060")) is None
+    assert av1_encoder_for(_hw(gpu_vendor="amd", gpu_name="AMD Radeon RX 6800")) is None
+    assert av1_encoder_for(_hw(gpu_vendor="intel", gpu_name="Intel UHD Graphics 630")) is None
+    assert av1_supported(_hw(gpu_vendor="unknown", gpu_name="Unknown GPU")) is False
+
+
+def test_build_preset_uses_av1_when_requested_and_supported():
+    hw = _hw(gpu_vendor="nvidia", gpu_name="RTX 4080", vram_gb=16, ram_gb=32)
+    preset = build_preset(hw, "high", codec="av1")
+    assert preset.encoder_id in AV1_ENCODERS
+    assert preset.encoder_id == "obs_nvenc_av1_tex"
+    assert preset.encoder_settings["bitrate"] == DEFAULT_BITRATE
+
+
+def test_build_preset_av1_falls_back_to_h264_when_unsupported():
+    hw = _hw(gpu_vendor="nvidia", gpu_name="RTX 3060", vram_gb=8, ram_gb=16)
+    preset = build_preset(hw, "high", codec="av1")
+    assert preset.encoder_id == "obs_nvenc_h264_tex"
+
+
+def test_build_preset_defaults_to_h264():
+    hw = _hw(gpu_vendor="nvidia", gpu_name="RTX 4080", vram_gb=16, ram_gb=32)
+    assert build_preset(hw, "high").encoder_id == "obs_nvenc_h264_tex"
 
 
 def test_all_presets_covers_every_tier():

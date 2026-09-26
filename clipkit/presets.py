@@ -75,6 +75,60 @@ def _encoder_for(hw: Hardware) -> tuple[str, str]:
     return "obs_x264", "x264 (CPU)"
 
 
+AV1_ENCODERS = {"obs_nvenc_av1_tex", "av1_texture_amf", "obs_qsv11_av1"}
+
+
+def av1_encoder_for(hw: Hardware) -> tuple[str, str] | None:
+    """Hardware AV1 encoder for this GPU, or None if it can't do AV1.
+
+    AV1 hardware encoding needs a recent GPU: NVIDIA RTX 40/50-series, AMD RX
+    7000-series (RDNA3), or Intel Arc. Detection is conservative on purpose —
+    ClipKit only offers AV1 when it is confident the GPU supports it.
+    """
+    name = hw.gpu_name.lower()
+    if hw.gpu_vendor == "nvidia" and any(t in name for t in ("rtx 40", "rtx40", "rtx 50", "rtx50")):
+        return "obs_nvenc_av1_tex", "NVIDIA NVENC AV1"
+    if hw.gpu_vendor == "amd" and ("rx 7" in name or "radeon rx 7" in name):
+        return "av1_texture_amf", "AMD HW AV1"
+    if hw.gpu_vendor == "intel" and "arc" in name:
+        return "obs_qsv11_av1", "Intel Quick Sync AV1"
+    return None
+
+
+def av1_supported(hw: Hardware) -> bool:
+    return av1_encoder_for(hw) is not None
+
+
+def _cbr_settings_av1(encoder_id: str, bitrate_kbps: int) -> dict:
+    if encoder_id == "obs_nvenc_av1_tex":
+        return {
+            "rate_control": "CBR",
+            "bitrate": bitrate_kbps,
+            "keyint_sec": 2,
+            "preset": "p5",
+            "tune": "hq",
+            "profile": "main",
+            "lookahead": False,
+            "psycho_aq": True,
+            "bf": 2,
+        }
+    if encoder_id == "av1_texture_amf":
+        return {
+            "rate_control": "cbr",
+            "bitrate": bitrate_kbps,
+            "preset": "quality",
+            "keyint_sec": 2,
+        }
+    if encoder_id == "obs_qsv11_av1":
+        return {
+            "rate_control": "CBR",
+            "bitrate": bitrate_kbps,
+            "target_usage": "TU4",
+            "keyint_sec": 2,
+        }
+    return {}
+
+
 def _cbr_settings(encoder_id: str, bitrate_kbps: int) -> dict:
     if encoder_id == "obs_nvenc_h264_tex":
         return {
@@ -179,6 +233,7 @@ def build_preset(
     replay_seconds: int = 300,
     fps: int = 60,
     bitrate_kbps: int = DEFAULT_BITRATE,
+    codec: str = "h264",
 ) -> Preset:
     preset_id = preset_id.lower()
     if preset_id not in PRESET_ORDER:
@@ -192,6 +247,10 @@ def build_preset(
         bitrate_kbps = DEFAULT_BITRATE
 
     encoder_id, encoder_label = _encoder_for(hw)
+    if codec == "av1":
+        av1 = av1_encoder_for(hw)
+        if av1 is not None:  # fall back to H.264 when the GPU can't do AV1
+            encoder_id, encoder_label = av1
     canvas_w, canvas_h = _even(hw.display_width), _even(hw.display_height)
 
     if preset_id == "low":
@@ -211,7 +270,10 @@ def build_preset(
         label = "High"
 
     replay_memory_mb = _replay_buffer_mb(bitrate_kbps, replay_seconds, encoder_id)
-    encoder_settings = _cbr_settings(encoder_id, bitrate_kbps)
+    if encoder_id in AV1_ENCODERS:
+        encoder_settings = _cbr_settings_av1(encoder_id, bitrate_kbps)
+    else:
+        encoder_settings = _cbr_settings(encoder_id, bitrate_kbps)
     return Preset(
         id=preset_id,
         label=label,
@@ -238,10 +300,11 @@ def all_presets(
     replay_seconds: int = 300,
     fps: int = 60,
     bitrate_kbps: int = DEFAULT_BITRATE,
+    codec: str = "h264",
 ) -> dict[str, Preset]:
     return {
         pid: build_preset(
-            hw, pid, replay_seconds=replay_seconds, fps=fps, bitrate_kbps=bitrate_kbps
+            hw, pid, replay_seconds=replay_seconds, fps=fps, bitrate_kbps=bitrate_kbps, codec=codec
         )
         for pid in PRESET_ORDER
     }
