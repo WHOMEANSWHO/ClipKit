@@ -12,7 +12,7 @@ from tkinter import filedialog, font as tkfont, messagebox, ttk
 from . import __version__
 from .audio import pick_microphone, usable_microphones
 from .hardware import Hardware, detect, load_cached_hardware, obs_is_running
-from .health import newest_clip, probe, reveal_in_explorer
+from .health import newest_clip, probe, reveal_in_explorer, verify_apply
 from .install_obs import (
     find_obs_exe,
     fresh_install_obs,
@@ -36,6 +36,7 @@ from .presets import (
     RECORD_BITRATES,
     Preset,
     all_presets,
+    av1_supported,
     estimated_clip_mb,
     recommend_bitrate,
     recommend_id,
@@ -461,6 +462,7 @@ class ClipKitApp(tk.Tk):
         self._start_with_windows = tk.BooleanVar(value=True)
         self._enable_recording = tk.BooleanVar(value=True)
         self._sort_medal = tk.BooleanVar(value=False)
+        self._use_av1 = tk.BooleanVar(value=False)
         self._status = tk.StringVar(value="Detecting your PC…")
         self._system_label = tk.StringVar(value="Detecting…")
         self._busy = False
@@ -606,8 +608,8 @@ class ClipKitApp(tk.Tk):
         button.pack(side="right")
         return button
 
-    def _check(self, parent: tk.Misc, text: str, variable: tk.BooleanVar, command=None) -> None:
-        tk.Checkbutton(
+    def _check(self, parent: tk.Misc, text: str, variable: tk.BooleanVar, command=None) -> tk.Checkbutton:
+        widget = tk.Checkbutton(
             parent,
             text=text,
             variable=variable,
@@ -617,13 +619,16 @@ class ClipKitApp(tk.Tk):
             activebackground=PANEL,
             activeforeground=TEXT,
             selectcolor=SURFACE,
+            disabledforeground=FAINT,
             highlightthickness=0,
             bd=0,
             font=(UI, 10),
             anchor="w",
             padx=4,
             pady=4,
-        ).pack(anchor="w", padx=16, fill="x")
+        )
+        widget.pack(anchor="w", padx=16, fill="x")
+        return widget
 
     def _build(self) -> None:
         header = tk.Frame(self, bg=PANEL)
@@ -892,6 +897,13 @@ class ClipKitApp(tk.Tk):
             "Sort Medal clips by FiveM server (off unless you turn it on)",
             self._sort_medal,
         )
+        self._av1_check = self._check(
+            options,
+            "Use AV1 encoding — smaller files (needs RTX 40+, RX 7000, or Arc)",
+            self._use_av1,
+            self._on_choices_changed,
+        )
+        self._av1_check.configure(state="disabled")
         tk.Frame(options, bg=PANEL, height=10).pack()
 
         fresh = self._card(
@@ -1025,6 +1037,9 @@ class ClipKitApp(tk.Tk):
         self._mic_choice.set(chosen)
         self._sync_mic_controls()
 
+    def _codec(self) -> str:
+        return "av1" if self._use_av1.get() else "h264"
+
     def _on_choices_changed(self) -> None:
         if not self._hw:
             return
@@ -1033,6 +1048,7 @@ class ClipKitApp(tk.Tk):
             replay_seconds=int(self._clip_seconds.get()),
             fps=int(self._fps.get()),
             bitrate_kbps=int(self._bitrate.get()),
+            codec=self._codec(),
         )
         self._sync_preset_copy()
 
@@ -1075,11 +1091,17 @@ class ClipKitApp(tk.Tk):
 
     def _apply_hardware(self, hw: Hardware, *, status_ready: bool = True) -> None:
         self._hw = hw
+        if av1_supported(hw):
+            self._av1_check.configure(state="normal")
+        else:
+            self._use_av1.set(False)
+            self._av1_check.configure(state="disabled")
         self._presets = all_presets(
             hw,
             replay_seconds=int(self._clip_seconds.get()),
             fps=int(self._fps.get()),
             bitrate_kbps=int(self._bitrate.get()),
+            codec=self._codec(),
         )
         recommended = recommend_id(hw)
         if not self._settings_restored:
@@ -1096,6 +1118,7 @@ class ClipKitApp(tk.Tk):
                         replay_seconds=int(self._clip_seconds.get()),
                         fps=int(self._fps.get()),
                         bitrate_kbps=suggested,
+                        codec=self._codec(),
                     )
             self._settings_restored = True
         for store, variable in self._chip_groups:
@@ -1411,6 +1434,7 @@ class ClipKitApp(tk.Tk):
                     start_with_windows=self._start_with_windows.get(),
                     enable_recording=self._enable_recording.get(),
                     sort_medal=self._sort_medal.get(),
+                    use_av1=self._use_av1.get(),
                 )
             )
         except OSError:
@@ -1451,6 +1475,7 @@ class ClipKitApp(tk.Tk):
             ("start_with_windows", self._start_with_windows),
             ("enable_recording", self._enable_recording),
             ("sort_medal", self._sort_medal),
+            ("use_av1", self._use_av1),
         )
         for key, variable in extras:
             if key in data:
@@ -1605,6 +1630,11 @@ class ClipKitApp(tk.Tk):
             messagebox.showerror("ClipKit could not apply settings", str(exc))
             return
         log(f"apply succeeded: profile={result.get('profile')} output={result.get('output_dir')}")
+        checks = verify_apply()
+        log(f"verify_apply: {checks}")
+        if not checks.get("ok"):
+            failed = [name for name, ok in checks.items() if name != "ok" and not ok]
+            self._status.set("Applied, but a check needs a look: " + ", ".join(failed))
         self._just_installed = False
         if result.get("mic_device_id"):
             self._saved = dict(self._saved or {})
