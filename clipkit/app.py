@@ -191,15 +191,21 @@ class RoundedButton(tk.Canvas):
         return self._hover if self._hovering else self._fill
 
     def _redraw(self) -> None:
-        w = self.winfo_width() or int(self["width"])
-        h = self.winfo_height() or int(self["height"])
+        w = self.winfo_width()
+        if w <= 1:
+            w = int(self["width"])
+        h = self.winfo_height()
+        if h <= 1:
+            h = int(self["height"])
         self.delete("all")
         photo = _rounded_photo(w, h, self._radius, self._fill_now())
         if photo is not None:
             self._img = photo
             self.create_image(0, 0, anchor="nw", image=photo)
         else:
-            self.configure(bg=self._fill_now())
+            # Flat fallback (Pillow missing or not yet sized). Draw a plain rectangle
+            # directly — never call self.configure() here, or it recurses into _redraw.
+            self.create_rectangle(0, 0, max(w, 1), max(h, 1), fill=self._fill_now(), outline="")
         fg = MUTED if self._state == "disabled" else self._fg
         self.create_text(w // 2, h // 2, text=self._text, fill=fg, font=self._font)
 
@@ -283,17 +289,21 @@ class RoundedChip(tk.Canvas):
         h = self.winfo_height() or 30
         self.delete("all")
         if self._selected:
-            photo = _rounded_photo(w, h, self._radius, PRIMARY_BTN)
+            fill = PRIMARY_BTN
             fg = ON_PRIMARY
         elif self._hovering:
-            photo = _rounded_photo(w, h, self._radius, RAISED)
+            fill = RAISED
             fg = TEXT
         else:
-            photo = None
+            fill = None  # unselected: transparent, showing the track behind
             fg = MUTED
-        if photo is not None:
-            self._img = photo
-            self.create_image(0, 0, anchor="nw", image=photo)
+        if fill is not None:
+            photo = _rounded_photo(w, h, self._radius, fill)
+            if photo is not None:
+                self._img = photo
+                self.create_image(0, 0, anchor="nw", image=photo)
+            else:
+                self.create_rectangle(0, 0, max(w, 1), max(h, 1), fill=fill, outline="")
         self.create_text(w // 2, h // 2, text=self._text, fill=fg, font=self._font)
 
 
@@ -337,13 +347,19 @@ class KeybindButton(tk.Canvas):
         return KEY_BG
 
     def _redraw(self) -> None:
-        w = self.winfo_width() or int(self["width"])
-        h = self.winfo_height() or int(self["height"])
+        w = self.winfo_width()
+        if w <= 1:
+            w = int(self["width"])
+        h = self.winfo_height()
+        if h <= 1:
+            h = int(self["height"])
         self.delete("all")
         photo = _rounded_photo(w, h, self._radius, self._fill_now())
         if photo is not None:
             self._img = photo
             self.create_image(0, 0, anchor="nw", image=photo)
+        else:
+            self.create_rectangle(0, 0, max(w, 1), max(h, 1), fill=self._fill_now(), outline="")
         text = self._PROMPT if self._listening else self.hotkey.label
         if self._state == "disabled":
             fg = FAINT
