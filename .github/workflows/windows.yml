@@ -32,6 +32,22 @@ jobs:
       - name: Run tests
         run: python -m pytest tests -q
 
+      - name: Validate OBS helper scripts (real Windows)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Get-ChildItem scripts/*.ps1 | ForEach-Object {
+            $errs = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$errs)
+            if ($errs -and $errs.Count -gt 0) { throw "PowerShell parse errors in $($_.Name): $($errs -join '; ')" }
+            Write-Host "parse OK: $($_.Name)"
+          }
+          # Popup self-test: compiles the no-activate C# window class and builds the
+          # WinForms form on genuine Windows (no display needed).
+          & powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/clipkit_toast.ps1 -SelfTest
+          if ($LASTEXITCODE -ne 0) { throw "clipkit_toast.ps1 -SelfTest failed ($LASTEXITCODE)" }
+          Write-Host "popup self-test OK on real Windows"
+
       - name: Smoke test - detect
         run: python clipkit.py --detect
 
